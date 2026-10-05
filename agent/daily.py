@@ -31,7 +31,7 @@ from email.utils import parsedate_to_datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import slides  # noqa: E402
 
-VERSION = "v13 (one-tap Post/Skip buttons)"
+VERSION = "v16 (upload images first, then Telegram)"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SEEN_PATH = os.path.join(ROOT, "data", "seen.json")
 MKT_PATH = os.path.join(ROOT, "data", "markets.json")
@@ -246,6 +246,111 @@ def get_markets():
     return [], problems + [f"only {ok}/10 indices OK, markets slide skipped"]
 
 
+
+
+# ---------------------------------------------------------------- Nifty 50 (no AI, zero credits)
+# Backup list only (current as of 30 Sep 2026: Wipro out, BSE in). The live list is fetched from NSE daily.
+NIFTY50_BACKUP = """ADANIENT ADANIPORTS APOLLOHOSP ASIANPAINT AXISBANK BAJAJ-AUTO BAJFINANCE BAJAJFINSV BEL BHARTIARTL
+CIPLA COALINDIA DRREDDY EICHERMOT ETERNAL GRASIM HCLTECH HDFCBANK HDFCLIFE HINDALCO HINDUNILVR ICICIBANK INDIGO
+INFY ITC JIOFIN JSWSTEEL KOTAKBANK LT M&M MARUTI MAXHEALTH NESTLEIND NTPC ONGC POWERGRID RELIANCE SBILIFE
+SHRIRAMFIN SBIN SUNPHARMA TCS TATACONSUM TMPV TATASTEEL TECHM TITAN TRENT ULTRACEMCO BSE""".split()
+NIFTY_POST = os.environ.get("NIFTY_POST", "1") != "0"
+
+
+def nifty_constituents():
+    """Official list from NSE (CSV). Falls back to the built-in list."""
+    for url in ("https://www.niftyindices.com/IndexConstituent/ind_nifty50list.csv",
+                "https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv",
+                "https://archives.nseindia.com/content/indices/ind_nifty50list.csv"):
+        code, raw = http("GET", url, raw=True, timeout=20)
+        if code == 200 and isinstance(raw, (bytes, bytearray)) and raw:
+            rows = [r.split(",") for r in raw.decode("utf-8", "ignore").splitlines()[1:] if r.strip()]
+            syms = [r[2].strip() for r in rows if len(r) > 2 and r[2].strip()]
+            if 45 <= len(syms) <= 55:
+                return syms, "NSE official list"
+    return NIFTY50_BACKUP, "built-in list (NSE list unreachable)"
+
+
+def yahoo_history(symbol):
+    """Daily closes for ~2 years [(date, close)], plus the most recent price Yahoo has (live during market hours)."""
+    url = (f"https://query1.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(symbol)}"
+           "?range=2y&interval=1d&includePrePost=false")
+    code, js = http("GET", url, timeout=25)
+    try:
+        r = js["chart"]["result"][0]
+        hist = [(datetime.fromtimestamp(t, IST).strftime("%Y-%m-%d"), c)
+                for t, c in zip(r["timestamp"], r["indicators"]["quote"][0]["close"]) if c]
+        meta = r.get("meta") or {}
+        latest = None
+        if meta.get("regularMarketPrice") and meta.get("regularMarketTime"):
+            t = datetime.fromtimestamp(meta["regularMarketTime"], IST)
+            latest = (t.strftime("%Y-%m-%d"), float(meta["regularMarketPrice"]), t)
+        return hist, latest
+    except Exception:
+        return [], None
+
+
+def market_open(t):
+    return t.weekday() < 5 and (9, 15) <= (t.hour, t.minute) <= (15, 30)
+
+
+def changes(hist, latest=None):
+    """Most recent price vs 1 day, 1 week, 1 month, 1 year earlier (closest earlier trading day)."""
+    hist = list(hist)
+    live, when = False, ""
+    if latest:
+        ld_, lp, lt = latest
+        if hist and ld_ > hist[-1][0]:
+            hist.append((ld_, lp))             # today's live/close price newer than the last candle
+        elif hist and ld_ == hist[-1][0]:
+            hist[-1] = (ld_, lp)               # same day: use the most recent price
+        now = datetime.now(IST)
+        live = market_open(now) and ld_ == now.strftime("%Y-%m-%d") and (now - lt).total_seconds() < 3600
+        when = lt.strftime("%H:%M")
+    if len(hist) < 2:
+        return None
+    last_d, last = hist[-1]
+    ld = datetime.strptime(last_d, "%Y-%m-%d")
+
+    def base(days):
+        target = (ld - timedelta(days=days)).strftime("%Y-%m-%d")
+        older = [c for d, c in hist[:-1] if d <= target]
+        return older[-1] if older else None
+
+    def pct(b):
+        return None if not b else (last - b) / b * 100
+    return {"date": last_d, "close": last, "prev": hist[-2][1], "d1": pct(hist[-2][1]),
+            "w1": pct(base(7)), "m1": pct(base(30)), "y1": pct(base(365)), "live": live, "time": when}
+
+
+def get_nifty():
+    """Index + all 50 stocks. Rows that fail checks are left out and reported."""
+    problems = []
+    idx = changes(*yahoo_history("^NSEI"))
+    if not idx or not (5000 < idx["close"] < 100000) or abs(idx["d1"] or 0) > 10:
+        return None, ["Nifty index data missing or implausible; Nifty post skipped"]
+    syms, list_src = nifty_constituents()
+    if "built-in" in list_src:
+        problems.append("Nifty list: " + list_src)
+    rows = []
+    for sym in syms:
+        ch = changes(*yahoo_history(sym + ".NS"))
+        time.sleep(0.25)
+        if not ch or ch["d1"] is None:
+            problems.append(f"{sym}: no data")
+            continue
+        if ch["date"] != idx["date"]:
+            problems.append(f"{sym}: stale data ({ch['date']})")
+            continue
+        if abs(ch["d1"]) > 20:  # beyond circuit limits: treat as bad data
+            problems.append(f"{sym}: implausible 1-day move {ch['d1']:.1f}%")
+            continue
+        rows.append({"sym": sym, **ch})
+    if len(rows) < 45:
+        return None, problems + [f"only {len(rows)}/50 stocks verified; Nifty post skipped"]
+    rows.sort(key=lambda r: -r["d1"])
+    log(f"nifty: index {idx['close']:.2f} ({idx['d1']:+.2f}%), {len(rows)} stocks, {list_src}")
+    return {"index": idx, "rows": rows, "list_src": list_src}, problems
 
 
 # ---------------------------------------------------------------- news
@@ -489,6 +594,7 @@ DEFAULT_CAPTIONS = {
     "andhra": "Andhra Pradesh today, in one quick read.\nఆంధ్రప్రదేశ్ ఈరోజు.\n#AroundUs #AndhraPradesh",
     "local": "Around Giddalur today. Problem on your street? DM us, we never share who sent it.\nమన గిద్దలూరు చుట్టూ.\n#AroundUs #Giddalur",
     "rupee": "How many rupees for 1 dollar, euro, pound, yen, yuan, Canadian & Singapore dollar and dirham today.\nఈరోజు రూపాయి విలువ.\n#AroundUs #Rupee",
+    "nifty": "Nifty 50 at close, with all 50 stocks ranked by their 1-day move. Also how each did over 1 week, 1 month and 1 year. For information only, not investment advice.\nనిఫ్టీ 50 ఈరోజు.\n#AroundUs #Nifty50 #StockMarket",
     "markets": "How the world's 10 biggest stock exchanges closed. For information only, not investment advice.\nమార్కెట్లు ఎలా ముగిశాయి.\n#AroundUs #Sensex",
 }
 
@@ -570,6 +676,13 @@ def main():
     fx, fx_note, fx_problems = get_fx()
     log(f"fx: {len(fx)} currencies", fx_problems)
     mkts, mkt_problems = get_markets() if (MARKETS_POST and now.weekday() < 5) else ([], [])
+    nifty, nifty_problems = None, []
+    if NIFTY_POST and now.weekday() < 5:
+        try:
+            nifty, nifty_problems = get_nifty()
+        except Exception as e:  # never let the Nifty post stop the others
+            nifty, nifty_problems = None, [f"Nifty post skipped: {str(e)[:120]}"]
+    mkt_problems = mkt_problems + nifty_problems[:6]
 
     # 3. one Claude call
     result, problem = {}, ""
@@ -606,6 +719,8 @@ def main():
         plan.append(("rupee", lambda p: slides.rupee(fx, p, note=fx_note)))
     if mkts:
         plan.append(("markets", lambda p: slides.markets(mkts, p)))
+    if nifty:
+        plan.append(("nifty", lambda p: slides.nifty(nifty, p)))
     if posts["india"]:
         n = len(posts["india"])
         plan.append(("india", lambda p: slides.digest("INDIA", f"Top {n} in India", "India", posts["india"], p)))
@@ -626,32 +741,29 @@ def main():
             log(f"render {name} failed: {e}")
     log(f"rendered {len(made)} posts")
 
-    # 6. Telegram: a summary, then each post separately (image + its own caption)
+    # 6. Save the queue. Telegram is sent by agent/send.py AFTER the images are uploaded to GitHub,
+    #    so a ✅ tap always has an image online behind it.
     counts = " · ".join(f"{s} {len(posts[s])}" for s in SECTIONS)
     issues = ([problem] if problem else []) + notes + fx_problems + mkt_problems
-    tg("sendMessage", chat_id=TG_CHAT,
-       text=f"☕ Around Us · {now.strftime('%A, %d %b')}\n\n{len(made)} posts ready · {counts}\n"
-            f"💱 rupee: {fx_note if fx else 'not shown (sources did not agree)'}\n"
-            f"📈 markets: {'yes' if mkts else 'no'}\n"
-            + ("\nNotes:\n" + "\n".join("• " + x for x in issues[:10]) + "\n" if issues else "")
-            + "\nEach post follows below. Tap ✅ Post to publish it on Instagram, or ❌ Skip.")
+    summary = (f"☕ Around Us · {now.strftime('%A, %d %b')}\n\n{len(made)} posts ready · {counts}\n"
+               f"💱 rupee: {fx_note if fx else 'not shown (sources did not agree)'}\n"
+               f"📈 markets: {'yes' if mkts else 'no'} · Nifty 50: {'yes' if nifty else 'no'}\n"
+               + ("\nNotes:\n" + "\n".join("• " + x for x in issues[:10]) + "\n" if issues else "")
+               + "\nTap ✅ Post under any post to publish it on Instagram (live in ~5-15 min), or ❌ Skip.")
     queue = {}
-    for n, (name, path) in enumerate(made, 1):
+    for name, path in made:
         cap = captions.get(name, "")
         srcs = sorted({x["src"] for x in posts.get(name, []) if x.get("src")})
         if srcs:
             cap = cap.rstrip() + "\n\nSources: " + ", ".join(srcs[:8])
-        key = f"{day}/{os.path.basename(path)}"
-        queue[key] = {"name": name, "caption": cap[:2200], "status": "waiting"}
-        buttons = [{"text": "✅ Post", "callback_data": f"post|{key}"[:64]},
-                   {"text": "❌ Skip", "callback_data": f"skip|{key}"[:64]}]
-        code, js = tg_photo(path, f"POST {n}/{len(made)}\n\n" + cap, buttons)
-        if code == 200:
-            queue[key]["tg_message_id"] = (js.get("result") or {}).get("message_id")
-        else:
-            log(f"telegram post {name} failed: {str(js)[:150]}")
+        queue[f"{day}/{os.path.basename(path)}"] = {"name": name, "caption": cap[:2200], "status": "waiting"}
     with open(os.path.join(OUT_DIR, "queue.json"), "w") as fh:
         json.dump(queue, fh, ensure_ascii=False, indent=1)
+    with open(os.path.join(OUT_DIR, "summary.txt"), "w") as fh:
+        fh.write(summary)
+    if os.environ.get("SEND_NOW") == "1":  # only for local testing; the workflow sends after upload
+        import send
+        send.send_day(day)
 
     stamp = now.isoformat()
     for x in used_ids:

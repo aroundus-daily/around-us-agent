@@ -31,7 +31,7 @@ THEMES = {  # tag colour, background, text, sub text, rule
     "ANDHRA PRADESH": dict(tag=(128, 72, 160), bg=PAPER, ink=INK, sub=MUTE, rule=LINE),
     "NEAR YOU": dict(tag=INK, bg=NEAR, ink=PAPER, sub=(255, 225, 220), rule=(240, 150, 140)),
 }
-W, H, M = 1080, 1350, 80
+W, H, M = 1080, 1350, 56
 HANDLE = "@aroundus.daily"
 
 
@@ -109,14 +109,15 @@ def base(kind, title, accent=None, subtitle=None):
 
 
 def footer(d, th, page=None, note=None):
-    d.line([(M, H - 120), (W - M, H - 120)], fill=th["rule"], width=2)
+    """Slim one-line footer."""
     if note:
-        d.text((M, H - 160), note, font=f("int500", 22), fill=th["sub"])
-    d.text((M, H - 92), HANDLE, font=f("int600", 28), fill=th["ink"])
+        d.text((M, H - 104), note, font=f("int500", 19), fill=th["sub"])
+    d.line([(M, H - 72), (W - M, H - 72)], fill=th["rule"], width=1)
+    d.text((M, H - 54), HANDLE, font=f("int600", 24), fill=th["ink"])
     date = datetime.now(IST).strftime("%d %b %Y")
     right = date + (f"   {page}" if page else "")
-    df = f("iserif", 34)
-    d.text((W - M - d.textlength(right, font=df), H - 96), right, font=df, fill=th["sub"])
+    df = f("iserif", 28)
+    d.text((W - M - d.textlength(right, font=df), H - 58), right, font=df, fill=th["sub"])
 
 
 def list_block(d, th, items, y0, y1, numbered=True):
@@ -205,7 +206,7 @@ def rupee(rows, path, page=None, note=""):
     d.text((cols[1], y), rupee_sign(hf).strip() + " FOR 1", font=hf, fill=th["sub"], anchor="ra")
     d.text((cols[2], y), "VS YESTERDAY", font=f("int700", 20), fill=th["sub"], anchor="ra")
     y += 40
-    rh = min(104, (H - 230 - y) / max(len(rows), 1))
+    rh = min(108, (H - 160 - y) / max(len(rows), 1))
     symbols = {"USD": "$", "EUR": "€", "GBP": "£", "JPY": "¥", "CNY": "CN¥", "CAD": "C$", "SGD": "S$", "AED": "AED"}
     colours = {"USD": (47, 85, 212), "EUR": (20, 135, 115), "GBP": (128, 72, 160), "JPY": (217, 67, 59),
                "CNY": (196, 54, 40), "CAD": (210, 60, 50), "SGD": (232, 119, 46), "AED": (34, 120, 80)}
@@ -239,7 +240,7 @@ def rupee(rows, path, page=None, note=""):
             d.text((cols[2], cy), txt, font=f("int700", 28), fill=col, anchor="rm")
             if col != MUTE:
                 arrow(d, cols[2] - tw - 26, cy, ch > 0, col, 16)
-    d.text((M, H - 196), "Red = rupee weaker than yesterday · Green = rupee stronger",
+    d.text((M, H - 132), "Red = rupee weaker than yesterday · Green = rupee stronger",
            font=f("int500", 22), fill=th["sub"])
     footer(d, th, page, note=note)
     im.save(path, quality=92)
@@ -248,7 +249,7 @@ def rupee(rows, path, page=None, note=""):
 def markets(rows, path, page=None, note=None):
     im, d, th, y = base("MARKETS", "Markets at close", accent="close",
                         subtitle="Top 10 stock exchanges · main index · day change")
-    rh = (H - 200 - y) / max(len(rows), 1)
+    rh = (H - 140 - y) / max(len(rows), 1)
     rh = min(rh, 92)
     for i, r in enumerate(rows):
         yy = y + i * rh
@@ -274,6 +275,99 @@ def markets(rows, path, page=None, note=None):
 
 def digest(kind, title, accent, items, path, page=None, subtitle=None, note=None):
     im, d, th, y = base(kind, title, accent=accent, subtitle=subtitle)
-    list_block(d, th, items, y, H - 180, numbered=(kind == "INDIA"))
+    list_block(d, th, items, y, H - (128 if note else 92), numbered=(kind == "INDIA"))
     footer(d, th, page, note=note)
     im.save(path, quality=92)
+
+
+def nifty(data, path):
+    """Nifty 50 index + all 50 stocks (sorted by 1-day change): price, 1D / 1W / 1M / 1Y %."""
+    th = {"tag": (242, 194, 48), "bg": INK, "ink": PAPER, "sub": (165, 165, 160), "rule": (60, 63, 70)}
+    im = Image.new("RGB", (W, H), th["bg"])
+    noise = Image.effect_noise((W, H), 9).convert("L")
+    im = Image.blend(im, Image.merge("RGB", [noise] * 3), 0.04)
+    d = ImageDraw.Draw(im)
+    L = 40  # tighter side margin for this dense post
+    # header
+    x, y0 = L + 18, 58
+    for r in (19, 12, 6):
+        d.ellipse([x - r, y0 - r, x + r, y0 + r], outline=PAPER, width=2)
+    d.ellipse([x - 4, y0 - 4, x + 4, y0 + 4], fill=NEAR)
+    d.text((L + 48, 38), "around us", font=f("bri800", 32), fill=PAPER)
+    tag, tf = "NIFTY 50", f("int700", 21)
+    tw = d.textlength(tag, font=tf)
+    d.rounded_rectangle([W - L - tw - 40, 36, W - L, 80], radius=22, fill=th["tag"])
+    d.text((W - L - tw - 20, 45), tag, font=tf, fill=INK)
+
+    ix = data["index"]
+    when = datetime.strptime(ix["date"], "%Y-%m-%d").strftime("%a %d %b %Y").upper()
+    label = f"NIFTY 50 · LIVE AT {ix['time']} IST · {when}" if ix.get("live") else f"NIFTY 50 · CLOSE ON {when}"
+    d.text((L, 104), label, font=f("int700", 20), fill=th["sub"])
+    vf = f("bri800", 82)
+    val = f"{ix['close']:,.2f}"
+    d.text((L - 3, 206), val, font=vf, fill=PAPER, anchor="ls")
+    up = ix["d1"] >= 0
+    col = UP if up else DOWN
+    chip = f"{abs(ix['close'] - ix['prev']):,.2f}  ({abs(ix['d1']):.2f}%)"
+    cx = L + d.textlength(val, font=vf) + 26
+    cf = f("int700", 27)
+    cw = d.textlength(chip, font=cf) + 56
+    d.rounded_rectangle([cx, 156, cx + cw, 204], radius=12, fill=col)
+    arrow(d, cx + 14, 180, up, PAPER, 17)
+    d.text((cx + 40, 180), chip, font=cf, fill=PAPER, anchor="lm")
+    y = 226
+    gap = 14
+    bw = (W - 2 * L - 2 * gap) / 3
+    for i, (lab, key) in enumerate((("1 WEEK", "w1"), ("1 MONTH", "m1"), ("1 YEAR", "y1"))):
+        gx = L + i * (bw + gap)
+        v = ix.get(key)
+        d.rounded_rectangle([gx, y, gx + bw, y + 58], radius=12, fill=INK2)
+        d.text((gx + 16, y + 29), lab, font=f("int600", 18), fill=th["sub"], anchor="lm")
+        if v is None:
+            d.text((gx + bw - 16, y + 29), "–", font=f("int700", 26), fill=th["sub"], anchor="rm")
+        else:
+            c = UP if v >= 0 else DOWN
+            t = f"{abs(v):.2f}%"
+            tfw = d.textlength(t, font=f("int700", 26))
+            d.text((gx + bw - 16, y + 29), t, font=f("int700", 26), fill=c, anchor="rm")
+            arrow(d, gx + bw - 16 - tfw - 24, y + 29, v >= 0, c, 15)
+
+    # table: 2 columns x 25 rows, sorted by 1-day change
+    rows = data["rows"][:50]
+    half = (len(rows) + 1) // 2
+    top = 306
+    cgap = 20
+    colw = (W - 2 * L - cgap) / 2
+    rh = (H - 112 - (top + 30)) / max(half, 1)
+    hf, sf, pf, nf = f("int700", 15), f("int600", 17), f("int600", 17), f("int600", 16)
+    # right edges (relative to column start): price, 1D, 1W, 1M, 1Y
+    edges = (226, 290, 354, 418, colw - 8)
+    for c in range(2):
+        x0 = L + c * (colw + cgap)
+        d.text((x0 + 6, top), "#  STOCK", font=hf, fill=th["sub"])
+        for lab, e in zip(("PRICE ₹" if has_glyph(hf, "₹") else "PRICE Rs", "1D", "1W", "1M", "1Y"), edges):
+            d.text((x0 + e, top), lab, font=hf, fill=th["sub"], anchor="ra")
+        for i, r in enumerate(rows[c * half:(c + 1) * half]):
+            yy = top + 30 + i * rh
+            if i % 2 == 0:
+                d.rounded_rectangle([x0, yy, x0 + colw, yy + rh - 3], radius=6, fill=INK2)
+            cy = yy + (rh - 3) / 2
+            rank = c * half + i + 1
+            d.text((x0 + 6, cy), f"{rank:>2}", font=hf, fill=th["sub"], anchor="lm")
+            d.text((x0 + 34, cy), r["sym"][:11], font=sf, fill=PAPER, anchor="lm")
+            price = r["close"]
+            ptxt = f"{price:,.0f}" if price >= 10000 else f"{price:,.1f}"
+            d.text((x0 + edges[0], cy), ptxt, font=pf, fill=PAPER, anchor="rm")
+            for key, e in zip(("d1", "w1", "m1", "y1"), edges[1:]):
+                v = r.get(key)
+                txt = "–" if v is None else (f"{v:+.0f}%" if abs(v) >= 99.95 else f"{v:+.1f}%")
+                colr = th["sub"] if v is None else (UP if v >= 0 else DOWN)
+                d.text((x0 + e, cy), txt, font=nf, fill=colr, anchor="rm")
+    d.text((L, H - 104), "Sorted by 1-day change · Data: NSE via Yahoo Finance · For information only, not investment advice",
+           font=f("int500", 18), fill=th["sub"])
+    d.line([(L, H - 72), (W - L, H - 72)], fill=th["rule"], width=1)
+    d.text((L, H - 54), HANDLE, font=f("int600", 24), fill=PAPER)
+    date = datetime.now(IST).strftime("%d %b %Y")
+    df = f("iserif", 28)
+    d.text((W - L - d.textlength(date, font=df), H - 58), date, font=df, fill=th["sub"])
+    im.save(path, quality=93)
