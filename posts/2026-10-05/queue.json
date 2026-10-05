@@ -1,0 +1,42 @@
+{
+ "2026-10-05/01-world.jpg": {
+  "name": "world",
+  "caption": "India in the world today, in one quick read.\nప్రపంచంలో భారత్ ఈరోజు.\n#AroundUs #India\n\nSources: Fibre2Fashion, Reuters, The Hindu, The Indian Express, The New Indian Express",
+  "status": "waiting"
+ },
+ "2026-10-05/02-rupee.jpg": {
+  "name": "rupee",
+  "caption": "How many rupees for 1 dollar, euro, pound, yen, yuan, Canadian & Singapore dollar and dirham today.\nఈరోజు రూపాయి విలువ.\n#AroundUs #Rupee",
+  "status": "waiting"
+ },
+ "2026-10-05/03-markets.jpg": {
+  "name": "markets",
+  "caption": "How the world's 10 biggest stock exchanges closed. For information only, not investment advice.\nమార్కెట్లు ఎలా ముగిశాయి.\n#AroundUs #Sensex",
+  "status": "waiting"
+ },
+ "2026-10-05/04-nifty.jpg": {
+  "name": "nifty",
+  "caption": "Nifty 50 at close, with all 50 stocks ranked by their 1-day move. Also how each did over 1 week, 1 month and 1 year. For information only, not investment advice.\nనిఫ్టీ 50 ఈరోజు.\n#AroundUs #Nifty50 #StockMarket",
+  "status": "waiting"
+ },
+ "2026-10-05/05-india.jpg": {
+  "name": "india",
+  "caption": "Today's top stories from across India, in simple words.\nఈరోజు దేశంలో ముఖ్య వార్తలు.\n#AroundUs #India\n\nSources: Bloomberg.com, Crude Oil Prices Today | OilPrice.com, ET EnergyWorld, India Today NE, Moneycontrol.com, NDTV, The Economic Times, The Hindu",
+  "status": "waiting"
+ },
+ "2026-10-05/06-south.jpg": {
+  "name": "south",
+  "caption": "What's happening across South India today.\nదక్షిణ భారతంలో ఈరోజు.\n#AroundUs #SouthIndia\n\nSources: Catholic Connect, DD India, ESPN, ETV Bharat, Kerala Kaumudi, The Indian Express, The Times of India",
+  "status": "waiting"
+ },
+ "2026-10-05/07-andhra.jpg": {
+  "name": "andhra",
+  "caption": "Andhra Pradesh today, in one quick read.\nఆంధ్రప్రదేశ్ ఈరోజు.\n#AroundUs #AndhraPradesh\n\nSources: Andhrajyothy, ETV Bharat, INSIGHTS IAS, India Today, LawBeat, Projects Today, The South First, The Times of India",
+  "status": "waiting"
+ },
+ "2026-10-05/08-local.jpg": {
+  "name": "local",
+  "caption": "Around Giddalur today. Problem on your street? DM us, we never share who sent it.\nమన గిద్దలూరు చుట్టూ.\n#AroundUs #Giddalur\n\nSources: Andhrajyothy, Business Today, Deccan Chronicle, Eenadu, ZigWheels.com",
+  "status": "waiting"
+ }
+}
