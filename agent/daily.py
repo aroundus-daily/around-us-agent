@@ -103,13 +103,7 @@ then one simple Telugu line
 then "Swipe through →"
 then at most 3 hashtags, always #AroundUs. Max 900 characters.
 
-Return ONLY JSON:
-{"world":[{"text":"","ids":[],"check":false}],
- "india":[{"text":"","ids":[],"check":false}],
- "south":[{"tag":"","text":"","ids":[],"check":false}],
- "andhra":[{"text":"","ids":[],"check":false}],
- "local":[{"tag":"","text":"","ids":[],"check":false}],
- "caption":""}
+Submit your answer with the submit_draft tool.
 
 TODAY: {today}. MARKETS SLIDE TODAY: {markets}.
 
@@ -320,17 +314,58 @@ def pick_model():
     return ids[0] if ids else "claude-sonnet-4-5"
 
 
-def ask_claude(prompt, model, max_tokens=4000):
+ITEM = {"type": "object", "properties": {
+    "text": {"type": "string"}, "tag": {"type": "string"}, "ids": {"type": "array", "items": {"type": "string"}},
+    "check": {"type": "boolean"}}, "required": ["text", "ids"]}
+DRAFT_TOOL = {"name": "submit_draft", "description": "Submit today's draft slides.",
+              "input_schema": {"type": "object", "properties": {
+                  **{k: {"type": "array", "items": ITEM} for k in ("world", "india", "south", "andhra", "local")},
+                  "caption": {"type": "string"}},
+                  "required": ["world", "india", "south", "andhra", "local", "caption"]}}
+CHECKED = {"type": "object", "properties": {
+    "text": {"type": "string"}, "tag": {"type": "string"}, "src": {"type": "string"},
+    "url": {"type": "string", "description": "Full URL of the credible article/official page that confirms this exact line, including every number in it."},
+    "ids": {"type": "array", "items": {"type": "string"}},
+    "status": {"type": "string", "enum": ["confirmed", "corrected"]}}, "required": ["text", "src", "url", "status"]}
+CHECK_TOOL = {"name": "submit_check", "description": "Submit the fact-checked items for this slide. Call exactly once, at the end.",
+              "input_schema": {"type": "object", "properties": {
+                  "items": {"type": "array", "items": CHECKED},
+                  "removed": {"type": "array", "items": {"type": "object", "properties": {
+                      "text": {"type": "string"}, "reason": {"type": "string"}}, "required": ["text", "reason"]}}},
+                  "required": ["items", "removed"]}}
+
+
+def claude_call(body):
     for attempt in range(3):
         code, js = http("POST", "https://api.anthropic.com/v1/messages",
-                        {"x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01"},
-                        {"model": model, "max_tokens": max_tokens,
-                         "messages": [{"role": "user", "content": prompt}]}, timeout=180)
+                        {"x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01"}, body, timeout=300)
         if code == 200:
-            return "".join(b.get("text", "") for b in js.get("content", []))
+            return 200, js
         log(f"Claude error {code}: {str(js)[:200]}")
-        time.sleep(6 * (attempt + 1))
-    raise RuntimeError("Claude request failed")
+        if code in (400, 401, 403, 404):
+            return code, js
+        time.sleep(8 * (attempt + 1))
+    return code, js
+
+
+def tool_input(js, name):
+    for b in js.get("content", []):
+        if b.get("type") == "tool_use" and b.get("name") == name:
+            return b.get("input") or {}
+    return None
+
+
+def draft_with_claude(prompt, model):
+    """Structured output: Claude must call submit_draft, so the result is always valid JSON."""
+    code, js = claude_call({"model": model, "max_tokens": 8000,
+                            "messages": [{"role": "user", "content": prompt}],
+                            "tools": [DRAFT_TOOL], "tool_choice": {"type": "tool", "name": "submit_draft"}})
+    if code != 200:
+        raise RuntimeError(f"Claude draft failed ({code})")
+    out = tool_input(js, "submit_draft")
+    if out is None:
+        raise RuntimeError("Claude did not return a draft")
+    return out
 
 
 VERIFY_PROMPT = """You are the fact-checker for "Around Us", a news page whose credibility depends on being right.
@@ -345,11 +380,11 @@ For each item:
 3. Fix any wrong number, date or name. Where a solid sourced number makes it more useful, add it (keep under 90 characters, simple words).
 4. REMOVE an item only if it is false, misleading, or you cannot confirm it anywhere credible.
 5. Keep allegations as allegations. Do not add new stories.
-Set "src" to the best confirming outlet (short name). Set "status": "confirmed" or "corrected".
+Set "src" to the best confirming outlet (short name) and "url" to the exact article or official page you used
+(search for it if needed). Every number in the line MUST appear on that page. If you cannot give such a URL, remove the item.
+Set "status": "confirmed" or "corrected".
 
-Return ONLY JSON:
-{{"items":[{{"text":"","tag":"","src":"","ids":[],"status":"confirmed"}}],
- "removed":[{{"text":"","reason":""}}]}}
+When finished, call the submit_check tool exactly once with the result.
 
 ITEMS WITH EVIDENCE:
 {payload}
@@ -366,23 +401,76 @@ def verify_section(section, items, evidence, model, max_searches):
                                      for e in ev]})
     prompt = VERIFY_PROMPT.format(section=section, payload=json.dumps(payload, ensure_ascii=False, indent=1))
     msgs = [{"role": "user", "content": prompt}]
-    tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": max_searches}]
-    text = ""
-    for _ in range(4):  # long tool turns can pause; continue them
-        code, js = http("POST", "https://api.anthropic.com/v1/messages",
-                        {"x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01"},
-                        {"model": model, "max_tokens": 4000, "messages": msgs, "tools": tools}, timeout=300)
+    tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": max_searches}, CHECK_TOOL]
+    for _ in range(5):
+        code, js = claude_call({"model": model, "max_tokens": 6000, "messages": msgs, "tools": tools})
         if code != 200:
             err = (js.get("error") or {}).get("message", "") if isinstance(js, dict) else ""
             return None, f"{code} {err[:100]}"
-        text += "".join(b.get("text", "") for b in js.get("content", []) if b.get("type") == "text")
-        if js.get("stop_reason") != "pause_turn":
+        out = tool_input(js, "submit_check")
+        if out is not None:
+            return (out.get("items") or [], out.get("removed") or []), "ok"
+        if js.get("stop_reason") not in ("pause_turn", "end_turn"):
             break
         msgs = msgs + [{"role": "assistant", "content": js["content"]}]
-    out = parse_json(text, key="items")
-    if "items" not in out:
-        return None, "unreadable result"
-    return (out.get("items") or [], out.get("removed") or []), "ok"
+        if js.get("stop_reason") == "end_turn":  # answered in text instead of the tool: ask once more
+            msgs.append({"role": "user", "content": "Now call submit_check with the final result."})
+    return None, "no result submitted"
+
+
+CREDIBLE = (
+    "gov.in", "nic.in", "rbi.org.in", "sebi.gov.in", "isro.gov.in", "imd.gov.in", "eci.gov.in", "un.org", "who.int",
+    "worldbank.org", "imf.org", "thehindu.com", "thehindubusinessline.com", "indianexpress.com", "newindianexpress.com",
+    "timesofindia.indiatimes.com", "economictimes.indiatimes.com", "hindustantimes.com", "livemint.com", "ndtv.com",
+    "ndtvprofit.com", "business-standard.com", "moneycontrol.com", "indiatoday.in", "news18.com", "theprint.in",
+    "scroll.in", "firstpost.com", "deccanherald.com", "deccanchronicle.com", "telanganatoday.com", "thesouthfirst.com",
+    "onmanorama.com", "dtnext.in", "ptinews.com", "aninews.in", "eenadu.net", "sakshi.com", "andhrajyothy.com",
+    "ntnews.com", "tv9telugu.com", "reuters.com", "apnews.com", "bbc.com", "bbc.co.uk", "aljazeera.com", "cnbc.com",
+    "bloomberg.com", "ft.com", "wsj.com", "nytimes.com", "theguardian.com", "espncricinfo.com", "icc-cricket.com",
+    "bcci.tv", "olympics.com", "nasa.gov", "esa.int",
+)
+NUM_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+
+def credible_domain(url):
+    host = urllib.parse.urlparse(url or "").netloc.lower().split(":")[0]
+    host = host[4:] if host.startswith("www.") else host
+    return host if host and any(host == d or host.endswith("." + d) for d in CREDIBLE) else None
+
+
+def page_text(url):
+    code, raw = http("GET", url, raw=True, timeout=20)
+    if code != 200 or not raw:
+        return None
+    txt = raw.decode("utf-8", "ignore")
+    txt = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", txt)
+    txt = html.unescape(re.sub(r"<[^>]+>", " ", txt))
+    return re.sub(r"\s+", " ", txt)
+
+
+def numbers(text):
+    return {n.replace(",", "").rstrip(".") for n in NUM_RE.findall(text or "")}
+
+
+def ground(item, evidence):
+    """Hard checks, no AI: credible domain, page loads, every number appears in the page or headline."""
+    url = item.get("url", "")
+    host = credible_domain(url)
+    if not host:
+        return False, f"source not on credible list ({urllib.parse.urlparse(url).netloc or 'no link'})"
+    nums = numbers(item.get("text"))
+    head_txt = " ".join(evidence[i]["title"] for i in item.get("ids", []) if i in evidence)
+    page = page_text(url)
+    if page is None and not nums:
+        item["link_ok"] = False
+        return True, f"{host} (page blocked bots; no numbers to check)"
+    haystack = numbers((page or "") + " " + head_txt)
+    missing = [n for n in nums if n not in haystack]
+    if missing:
+        where = "article" if page else "headline (article blocked bots)"
+        return False, f"number(s) {', '.join(missing)} not found in {where}"
+    item["link_ok"] = page is not None
+    return True, host
 
 
 def verify_all(draft, items, model, per_section):
@@ -396,12 +484,21 @@ def verify_all(draft, items, model, per_section):
         got, note = verify_section(sec, d_items, evidence, model, per_section)
         if got is None:
             # could not check: keep only items with 2+ outlets, drop the rest
-            res[sec] = [i for i in d_items if not i.get("check")]
-            removed += [{"text": i["text"], "reason": "single source; fact-check failed"} for i in d_items if i.get("check")]
+            # could not check this slide: publish nothing unverified for it
+            res[sec] = []
+            removed += [{"text": i["text"], "reason": "fact-check unavailable, not published"} for i in d_items]
             notes.append(f"{sec}: check failed ({note})")
         else:
-            res[sec], rem = got
+            kept, rem = got
             removed += rem
+            res[sec] = []
+            for it in kept:
+                ok, why = ground(it, evidence)
+                if ok:
+                    res[sec].append(it)
+                else:
+                    removed.append({"text": it.get("text", ""), "reason": why})
+            time.sleep(0.2)
         log(f"verify {sec}: {len(d_items)} drafted -> {len(res[sec])} kept")
     return res, removed, notes
 
@@ -468,7 +565,11 @@ def ig_handle():
 
 
 # ---------------------------------------------------------------- main
+VERSION = "v6 (link + number grounding)"
+
+
 def main():
+    log("Around Us agent", VERSION)
     for k, v in {"ANTHROPIC_API_KEY": ANTHROPIC_KEY, "TELEGRAM_BOT_TOKEN": TG_TOKEN,
                  "TELEGRAM_ADMIN_CHAT_ID": TG_CHAT}.items():
         if not v:
@@ -513,7 +614,7 @@ def main():
         "{markets}", "yes" if mkts else "no") + listing
     model = pick_model()
     log("model:", model)
-    draft = no_repeats(parse_json(ask_claude(prompt, model, max_tokens=6000), key="india"))
+    draft = no_repeats(draft_with_claude(prompt, model))
     log("draft:", {k: len(v) for k, v in draft.items() if isinstance(v, list)})
     checked, removed, vnotes = verify_all(draft, items, model, int(os.environ.get("SEARCHES_PER_SLIDE", "5")))
     res = no_repeats(checked)
@@ -567,6 +668,15 @@ def main():
         code, js = tg_album(paths, res.get("caption", ""))
         if code != 200:
             log("album failed:", str(js)[:200])
+    link_lines = []
+    for sec in ("world", "india", "south", "andhra", "local"):
+        for n, it in enumerate(res[sec], 1):
+            if it.get("url"):
+                link_lines.append(f"[{sec} {n}] {it.get('src', '')}: {it['url']}")
+    if link_lines:
+        msg = "🔗 Sources (tap to spot-check before approving):\n\n" + "\n".join(link_lines)
+        for i in range(0, len(msg), 3800):
+            tg("sendMessage", chat_id=TG_CHAT, disable_web_page_preview=True, text=msg[i:i + 3800])
     if res.get("removed"):
         tg("sendMessage", chat_id=TG_CHAT,
            text="🗑 Removed by fact-check:\n\n" + "\n".join(

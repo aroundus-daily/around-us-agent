@@ -237,7 +237,7 @@ def markets(rows, path, page=None, note=None):
             d.rounded_rectangle([W - M - 160, cy - 22, W - M, cy + 22], radius=10, fill=col)
             arrow(d, W - M - 146, cy, ch >= 0, PAPER, 14)
             d.text((W - M - 14, cy), f"{abs(ch):.2f}%", font=f("int700", 26), fill=PAPER, anchor="rm")
-    footer(d, th, page, note=note or "Last closing values. For information only, not investment advice.")
+    footer(d, th, page, note=note or "Last close, source: Yahoo Finance. For information only, not investment advice.")
     im.save(path, quality=92)
 
 
