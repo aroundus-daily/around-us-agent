@@ -1,0 +1,39 @@
+name: End of day movers
+
+on:
+  schedule:
+    - cron: "37 10 * * 1-5"   # 4:07 PM IST, Monday-Friday (market closes 3:30 PM)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: eod
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
+      IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: 1. Make the gainers & losers post
+        run: python agent/eod.py
+      - name: 2. Upload image to GitHub
+        run: |
+          git config user.name "around-us-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add -A posts/ data/
+          git diff --cached --quiet || git commit -m "eod movers: $(date -u +%F)"
+          for i in 1 2 3; do git pull --rebase --autostash && git push && break; sleep 5; done
+      - name: 3. Send it to Telegram with ✅ Post button
+        run: python agent/send.py --eod
