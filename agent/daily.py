@@ -66,7 +66,8 @@ FEEDS = {
     "LOCAL_TE":    ("local", gn("గిద్దలూరు OR మార్కాపురం OR ప్రకాశం OR కంభం OR బేస్తవారిపేట", days=7, lang="te")),
 }
 
-FX = [("USD", "USA"), ("CNY", "China"), ("EUR", "Germany"), ("JPY", "Japan · 100"), ("GBP", "UK")]
+FX = [("USD", "US dollar"), ("EUR", "Euro"), ("GBP", "British pound"), ("JPY", "Japanese yen · 100"),
+      ("CNY", "Chinese yuan"), ("CAD", "Canadian dollar"), ("SGD", "Singapore dollar"), ("AED", "UAE dirham")]
 EXCHANGES = [  # roughly the 10 largest exchanges by market value
     ("NYSE", "NYSE Composite", "^NYA"), ("Nasdaq", "Nasdaq Composite", "^IXIC"),
     ("Shanghai", "SSE Composite", "000001.SS"), ("Japan", "Nikkei 225", "^N225"),
@@ -247,7 +248,7 @@ def get_fx():
     if usd and not (60 < usd["inr"] < 150):
         problems.append(f"USD looks wrong: {usd['inr']:.2f}")
         out = []
-    if len(out) < 4:
+    if len(out) < 5:
         return [], "", problems
     used = sorted({s for x in out for s in x["sources"]})
     note = f"Checked: {' + '.join(used)}" + (f" · ECB {ecb_day}" if ecb_day else "")
@@ -333,50 +334,92 @@ def ask_claude(prompt, model, max_tokens=4000):
 
 
 VERIFY_PROMPT = """You are the fact-checker for "Around Us", a news page whose credibility depends on being right.
-Below is today's DRAFT (JSON). For EVERY item:
-1. Use web search to confirm it with credible sources: government/official sites, PIB, RBI, ISRO, IMD, courts,
-   or established outlets (The Hindu, Indian Express, Times of India, Hindustan Times, NDTV, Mint, Economic Times,
-   Business Standard, PTI, Reuters, BBC, AP, Deccan Chronicle, Eenadu, Sakshi). Ignore blogs and social posts.
-2. Fix any wrong number, date, name or exaggeration. If a solid, sourced number makes it more useful
-   (amount, %, count, date), add it, but keep the line under 90 characters and very simple.
-3. Set "src" to the most credible outlet that confirms it (short name, e.g. "The Hindu", "PIB", "Reuters").
-4. If you cannot confirm it from at least one credible source published in the last 3 days, REMOVE the item.
-5. Keep the same sections and order. Do not add new stories. Keep allegations as allegations.
-Search efficiently: one search can confirm several items.
+Below are today's draft items for the "{section}" slide, each with the EVIDENCE: the headlines and outlets it is based on.
 
-Return ONLY the corrected JSON in the same shape, with each item having: text, tag (if it had one), src, ids,
-and "status": "confirmed" or "corrected". Also return "removed": [{"text":"...","reason":"..."}] and keep "caption"
-(update it if items changed).
+For each item:
+1. CONFIRMED without searching if the evidence shows 2+ different credible outlets, or an official source
+   (government, PIB, RBI, SEBI, ISRO, IMD, Election Commission, courts, police). Just check the wording matches the evidence.
+2. Otherwise use web search to confirm it with a credible source from the last 3 days: official sites or established outlets
+   (The Hindu, Indian Express, Times of India, Hindustan Times, NDTV, Mint, Economic Times, Business Standard, PTI, ANI,
+   Reuters, BBC, AP, Deccan Chronicle, Deccan Herald, Eenadu, Sakshi, Andhra Jyothy, The New Indian Express). No blogs or social posts.
+3. Fix any wrong number, date or name. Where a solid sourced number makes it more useful, add it (keep under 90 characters, simple words).
+4. REMOVE an item only if it is false, misleading, or you cannot confirm it anywhere credible.
+5. Keep allegations as allegations. Do not add new stories.
+Set "src" to the best confirming outlet (short name). Set "status": "confirmed" or "corrected".
 
-DRAFT:
+Return ONLY JSON:
+{{"items":[{{"text":"","tag":"","src":"","ids":[],"status":"confirmed"}}],
+ "removed":[{{"text":"","reason":""}}]}}
+
+ITEMS WITH EVIDENCE:
+{payload}
 """
 
 
-def verify(draft, model, max_searches):
-    """Second pass: Claude checks every item on the web. Returns (verified, note)."""
-    msgs = [{"role": "user", "content": VERIFY_PROMPT + json.dumps(draft, ensure_ascii=False)}]
+def verify_section(section, items, evidence, model, max_searches):
+    """Fact-check one slide. Returns ((items, removed), note) or (None, note) on failure."""
+    payload = []
+    for it in items:
+        ev = [evidence[i] for i in it.get("ids", []) if i in evidence]
+        payload.append({"text": it["text"], "tag": it.get("tag", ""), "ids": it.get("ids", []),
+                        "evidence": [f'{e["title"]} | {e["outlet"]}' + (f' | also: {", ".join(e["also"])}' if e["also"] else "")
+                                     for e in ev]})
+    prompt = VERIFY_PROMPT.format(section=section, payload=json.dumps(payload, ensure_ascii=False, indent=1))
+    msgs = [{"role": "user", "content": prompt}]
     tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": max_searches}]
     text = ""
-    for _ in range(4):  # the API may pause long tool turns; continue them
+    for _ in range(4):  # long tool turns can pause; continue them
         code, js = http("POST", "https://api.anthropic.com/v1/messages",
                         {"x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01"},
-                        {"model": model, "max_tokens": 6000, "messages": msgs, "tools": tools}, timeout=300)
+                        {"model": model, "max_tokens": 4000, "messages": msgs, "tools": tools}, timeout=300)
         if code != 200:
             err = (js.get("error") or {}).get("message", "") if isinstance(js, dict) else ""
-            return None, f"web check unavailable ({code} {err[:120]})"
+            return None, f"{code} {err[:100]}"
         text += "".join(b.get("text", "") for b in js.get("content", []) if b.get("type") == "text")
         if js.get("stop_reason") != "pause_turn":
             break
         msgs = msgs + [{"role": "assistant", "content": js["content"]}]
-    try:
-        return parse_json(text[text.rfind('{"world"'):] if '{"world"' in text else text), "web-checked"
-    except Exception as e:
-        return None, f"could not read fact-check result ({e})"
+    out = parse_json(text, key="items")
+    if "items" not in out:
+        return None, "unreadable result"
+    return (out.get("items") or [], out.get("removed") or []), "ok"
 
 
-def parse_json(text):
-    m = re.search(r"\{.*\}", text, re.S)
-    return json.loads(m.group(0)) if m else {}
+def verify_all(draft, items, model, per_section):
+    evidence = {it["id"]: it for it in items}
+    res, removed, notes = {"caption": draft.get("caption", "")}, [], []
+    for sec in ("world", "india", "south", "andhra", "local"):
+        d_items = draft.get(sec, [])
+        if not d_items:
+            res[sec] = []
+            continue
+        got, note = verify_section(sec, d_items, evidence, model, per_section)
+        if got is None:
+            # could not check: keep only items with 2+ outlets, drop the rest
+            res[sec] = [i for i in d_items if not i.get("check")]
+            removed += [{"text": i["text"], "reason": "single source; fact-check failed"} for i in d_items if i.get("check")]
+            notes.append(f"{sec}: check failed ({note})")
+        else:
+            res[sec], rem = got
+            removed += rem
+        log(f"verify {sec}: {len(d_items)} drafted -> {len(res[sec])} kept")
+    return res, removed, notes
+
+
+def parse_json(text, key=None):
+    """Return the last JSON object in text (optionally one containing `key`)."""
+    dec = json.JSONDecoder()
+    best = None
+    for m in re.finditer(r"\{", text):
+        try:
+            obj, _ = dec.raw_decode(text[m.start():])
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and (key is None or key in obj):
+            best = obj
+            if key is None:
+                break
+    return best or {}
 
 
 def no_repeats(result):
@@ -470,16 +513,13 @@ def main():
         "{markets}", "yes" if mkts else "no") + listing
     model = pick_model()
     log("model:", model)
-    draft = no_repeats(parse_json(ask_claude(prompt, model, max_tokens=6000)))
-    checked, vnote = verify(draft, model, int(os.environ.get("MAX_SEARCHES", "12")))
-    if checked:
-        res = no_repeats(checked)
-        res["removed"] = checked.get("removed", [])
-    else:
-        # fallback: only keep items reported by 2+ outlets, and say so loudly
-        res = {k: ([i for i in v if not i.get("check")] if isinstance(v, list) else v) for k, v in draft.items()}
-        res["removed"] = [{"text": i["text"], "reason": "single source, web check unavailable"}
-                          for k, v in draft.items() if isinstance(v, list) for i in v if i.get("check")]
+    draft = no_repeats(parse_json(ask_claude(prompt, model, max_tokens=6000), key="india"))
+    log("draft:", {k: len(v) for k, v in draft.items() if isinstance(v, list)})
+    checked, removed, vnotes = verify_all(draft, items, model, int(os.environ.get("SEARCHES_PER_SLIDE", "5")))
+    res = no_repeats(checked)
+    res["removed"] = removed
+    vnote = "web-checked" + (" · " + "; ".join(vnotes) if vnotes else "")
+    checked = not vnotes
     log("verification:", vnote)
 
     # ---- render slides
@@ -487,8 +527,10 @@ def main():
     plan = []
     for sec in ("world", "india", "south", "andhra", "local"):
         res[sec] = res.get(sec) or []
-    if res["world"] or fx:
-        plan.append(("world", lambda p, pg: slides.world(res["world"][:6], fx, p, pg, fx_note=fx_note)))
+    if res["world"]:
+        plan.append(("world", lambda p, pg: slides.digest("WORLD", "India in the world", "world", res["world"][:7], p, pg)))
+    if fx:
+        plan.append(("rupee", lambda p, pg: slides.rupee(fx, p, pg, note=fx_note)))
     if mkts:
         plan.append(("markets", lambda p, pg: slides.markets(mkts, p, pg)))
     if res["india"]:

@@ -24,6 +24,7 @@ NEAR = (217, 67, 59)
 
 THEMES = {  # tag colour, background, text, sub text, rule
     "WORLD": dict(tag=(47, 85, 212), bg=PAPER, ink=INK, sub=MUTE, rule=LINE),
+    "RUPEE": dict(tag=(20, 135, 115), bg=PAPER, ink=INK, sub=MUTE, rule=LINE),
     "MARKETS": dict(tag=(242, 194, 48), bg=INK, ink=PAPER, sub=(160, 160, 155), rule=(60, 63, 70)),
     "INDIA": dict(tag=(232, 119, 46), bg=PAPER, ink=INK, sub=MUTE, rule=LINE),
     "SOUTH INDIA": dict(tag=(20, 135, 115), bg=PAPER, ink=INK, sub=MUTE, rule=LINE),
@@ -173,6 +174,44 @@ def arrow(d, x, y, up, col, s):
     pts = [(x, y + s * 0.6), (x + s, y + s * 0.6), (x + s / 2, y - s * 0.6)] if up else \
           [(x, y - s * 0.6), (x + s, y - s * 0.6), (x + s / 2, y + s * 0.6)]
     d.polygon(pts, fill=col)
+
+
+def rupee(rows, path, page=None, note=""):
+    im, d, th, y = base("RUPEE", "Rupee today", accent="Rupee",
+                        subtitle="How many rupees for 1 unit of each currency")
+    # header row
+    cols = (M, W - M - 330, W - M)  # currency | rupees | change
+    d.text((cols[0], y), "CURRENCY", font=f("int700", 20), fill=th["sub"])
+    d.text((cols[1], y), "₹ FOR 1", font=f("int700", 20), fill=th["sub"], anchor="ra")
+    d.text((cols[2], y), "VS YESTERDAY", font=f("int700", 20), fill=th["sub"], anchor="ra")
+    y += 40
+    rh = min(104, (H - 230 - y) / max(len(rows), 1))
+    for i, r in enumerate(rows):
+        yy = y + i * rh
+        if i % 2 == 0:
+            d.rounded_rectangle([M - 16, yy, W - M + 16, yy + rh - 6], radius=14, fill=(233, 229, 220))
+        cy = yy + (rh - 6) / 2
+        d.text((cols[0], cy - 14), r["code"], font=f("int700", 34), fill=INK, anchor="lm")
+        d.text((cols[0], cy + 22), r["country"], font=f("int500", 22), fill=MUTE, anchor="lm")
+        num = f"{r['inr']:.2f}"
+        nf, rf = f("bri800", 44), f("int700", 34)
+        d.text((cols[1], cy), num, font=nf, fill=INK, anchor="rm")
+        d.text((cols[1] - d.textlength(num, font=nf) - 4, cy + 2), "₹", font=rf, fill=INK, anchor="rm")
+        ch = r.get("change")
+        if ch is None:
+            d.text((cols[2], cy), "–", font=f("int600", 30), fill=MUTE, anchor="rm")
+        else:
+            # rupee price of a foreign unit going UP means the rupee got weaker
+            col = DOWN if ch > 0.005 else UP if ch < -0.005 else MUTE
+            txt = f"{abs(ch):.2f}%"
+            tw = d.textlength(txt, font=f("int700", 28))
+            d.text((cols[2], cy), txt, font=f("int700", 28), fill=col, anchor="rm")
+            if col != MUTE:
+                arrow(d, cols[2] - tw - 26, cy, ch > 0, col, 16)
+    d.text((M, H - 196), "Red = rupee weaker than yesterday · Green = rupee stronger",
+           font=f("int500", 22), fill=th["sub"])
+    footer(d, th, page, note=note)
+    im.save(path, quality=92)
 
 
 def markets(rows, path, page=None, note=None):
