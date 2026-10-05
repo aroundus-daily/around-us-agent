@@ -31,11 +31,11 @@ from email.utils import parsedate_to_datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import slides  # noqa: E402
 
-VERSION = "v11 (India-only world post, 2-line items)"
+VERSION = "v13 (one-tap Post/Skip buttons)"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SEEN_PATH = os.path.join(ROOT, "data", "seen.json")
 MKT_PATH = os.path.join(ROOT, "data", "markets.json")
-OUT_DIR = os.path.join(ROOT, "out")
+POSTS_DIR = os.path.join(ROOT, "posts")
 IST = timezone(timedelta(hours=5, minutes=30))
 
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
@@ -311,6 +311,7 @@ def similar(a, b):
     return bool(wa and wb) and common >= 3 and common / min(len(wa), len(wb)) >= 0.6
 
 
+TELUGU_RE = re.compile(r"[\u0C00-\u0C7F]")  # images use English fonts only
 INDIA_RE = re.compile(r"\bIndia(n|ns|'s)?\b|భారత", re.I)
 
 
@@ -322,6 +323,8 @@ def nums(t):
 # ---------------------------------------------------------------- Claude (one call)
 EDITOR_PROMPT = """You are the editor of "Around Us", a casual Instagram page for people in and around Giddalur, Andhra Pradesh.
 Rewrite headlines into very simple, short, plain English a 14-year-old understands. No jargon, no hype, no emoji.
+Some headlines are in Telugu: translate them into simple English. Item text must be ENGLISH ONLY (no Telugu script),
+because the images cannot show Telugu letters. Captions may include one Telugu line.
 
 Make FIVE posts. For each, pick headlines from the list below (use their [id]) and write ONE item per headline:
 a clear, slightly detailed sentence of 100-160 characters (it should fill about 2 full lines on the image):
@@ -433,8 +436,12 @@ def build(result, items):
                 continue
             if any(similar(text, t) for t in used_text) or any(similar(h["title"], t) for t in used_text):
                 continue
+            if TELUGU_RE.search(text):
+                continue  # Telugu letters cannot be shown on the image
             if not nums(text) <= nums(h["title"]):  # a number not in the headline: use the headline itself
                 text = h["title"]
+                if TELUGU_RE.search(text):
+                    continue
             if sec == "world" and not (INDIA_RE.search(text) and INDIA_RE.search(h["title"])):
                 continue  # India in the world: must be about India
             lines.append({"text": text[:200], "tag": (x.get("tag") or "")[:20], "src": h["outlet"], "date": h["date"]})
@@ -458,6 +465,8 @@ def build(result, items):
                 continue
             if sec == "world" and not INDIA_RE.search(h["title"]):
                 continue
+            if TELUGU_RE.search(h["title"]):
+                continue  # raw Telugu headline can't go on an English image
             tag = ""
             if sec == "south":
                 tag = {"TAMIL_NADU": "Tamil Nadu", "KARNATAKA": "Karnataka", "KERALA": "Kerala",
@@ -489,16 +498,32 @@ def tg(method, **params):
     return http("POST", f"https://api.telegram.org/bot{TG_TOKEN}/{method}", data=params)
 
 
-def tg_photo(path, caption):
+def tg_photo(path, caption, buttons=None):
     boundary = "----AroundUs" + hashlib.md5(path.encode()).hexdigest()
     with open(path, "rb") as fh:
         img = fh.read()
+    markup = ""
+    if buttons:
+        markup = (f'--{boundary}\r\nContent-Disposition: form-data; name="reply_markup"\r\n\r\n'
+                  f'{json.dumps({"inline_keyboard": [buttons]})}\r\n')
     body = (f'--{boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n{TG_CHAT}\r\n'
             f'--{boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n{caption[:1024]}\r\n'
+            + markup +
             f'--{boundary}\r\nContent-Disposition: form-data; name="photo"; filename="post.jpg"\r\n'
             f"Content-Type: image/jpeg\r\n\r\n").encode() + img + f"\r\n--{boundary}--\r\n".encode()
     return http("POST", f"https://api.telegram.org/bot{TG_TOKEN}/sendPhoto",
                 {"Content-Type": f"multipart/form-data; boundary={boundary}"}, body, timeout=60)
+
+
+def prune_old_posts(today, keep_days=7):
+    """Instagram copies the image when it publishes, so old images can go."""
+    import shutil
+    if not os.path.isdir(POSTS_DIR):
+        return
+    cutoff = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=keep_days)).strftime("%Y-%m-%d")
+    for d in os.listdir(POSTS_DIR):
+        if re.fullmatch(r"\d{4}-\d\d-\d\d", d) and d < cutoff:
+            shutil.rmtree(os.path.join(POSTS_DIR, d), ignore_errors=True)
 
 
 def ig_handle():
@@ -570,7 +595,10 @@ def main():
                                        if isinstance(v, str) and v.strip()}}
 
     # 5. render: one image per post
+    day = now.strftime("%Y-%m-%d")
+    OUT_DIR = os.path.join(POSTS_DIR, day)
     os.makedirs(OUT_DIR, exist_ok=True)
+    prune_old_posts(day)
     plan = []
     if posts["world"]:
         plan.append(("world", lambda p: slides.digest("WORLD", "India in the world", "world", posts["world"], p)))
@@ -606,15 +634,24 @@ def main():
             f"💱 rupee: {fx_note if fx else 'not shown (sources did not agree)'}\n"
             f"📈 markets: {'yes' if mkts else 'no'}\n"
             + ("\nNotes:\n" + "\n".join("• " + x for x in issues[:10]) + "\n" if issues else "")
-            + "\nEach post follows as a separate message. Dry run: nothing is posted to Instagram yet.")
+            + "\nEach post follows below. Tap ✅ Post to publish it on Instagram, or ❌ Skip.")
+    queue = {}
     for n, (name, path) in enumerate(made, 1):
         cap = captions.get(name, "")
         srcs = sorted({x["src"] for x in posts.get(name, []) if x.get("src")})
         if srcs:
             cap = cap.rstrip() + "\n\nSources: " + ", ".join(srcs[:8])
-        code, js = tg_photo(path, f"POST {n}/{len(made)}\n\n" + cap)
-        if code != 200:
+        key = f"{day}/{os.path.basename(path)}"
+        queue[key] = {"name": name, "caption": cap[:2200], "status": "waiting"}
+        buttons = [{"text": "✅ Post", "callback_data": f"post|{key}"[:64]},
+                   {"text": "❌ Skip", "callback_data": f"skip|{key}"[:64]}]
+        code, js = tg_photo(path, f"POST {n}/{len(made)}\n\n" + cap, buttons)
+        if code == 200:
+            queue[key]["tg_message_id"] = (js.get("result") or {}).get("message_id")
+        else:
             log(f"telegram post {name} failed: {str(js)[:150]}")
+    with open(os.path.join(OUT_DIR, "queue.json"), "w") as fh:
+        json.dump(queue, fh, ensure_ascii=False, indent=1)
 
     stamp = now.isoformat()
     for x in used_ids:
