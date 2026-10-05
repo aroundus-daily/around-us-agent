@@ -1,12 +1,14 @@
 """Around Us - daily agent (dry run: drafts go to Telegram only).
 
 Every morning it builds one carousel post:
-  1. WORLD    India in the world (3-4 items) + rupee vs USD, CNY, EUR, JPY, GBP
-  2. MARKETS  top 10 stock exchanges, last close (weekdays only)
-  3. INDIA    top 10 India stories, one line each
-  4. SOUTH    Tamil Nadu, Karnataka, Kerala, Telangana, Puducherry
-  5. ANDHRA   big Andhra Pradesh stories
-  6. NEAR YOU Giddalur and surrounding mandals (only if there is real news)
+  1. WORLD    India in the world
+  2. RUPEE    rupee vs 8 currencies (3 sources must agree)
+  3. MARKETS  top 10 stock exchanges, last close (weekdays only)
+  4. INDIA    top 10 India stories
+  5. SOUTH    Tamil Nadu, Karnataka, Kerala, Telangana
+  6. ANDHRA   big Andhra Pradesh stories
+  7. NEAR YOU Giddalur and surrounding mandals (only if there is real news)
+Every news line passes: Claude fact-check + credible link + numbers found in the source.
 No story appears on more than one slide.
 """
 import hashlib
@@ -355,17 +357,53 @@ def tool_input(js, name):
     return None
 
 
-def draft_with_claude(prompt, model):
-    """Structured output: Claude must call submit_draft, so the result is always valid JSON."""
-    code, js = claude_call({"model": model, "max_tokens": 8000,
-                            "messages": [{"role": "user", "content": prompt}],
-                            "tools": [DRAFT_TOOL], "tool_choice": {"type": "tool", "name": "submit_draft"}})
+def err_msg(js):
+    return ((js.get("error") or {}).get("message", "") if isinstance(js, dict) else "")[:160]
+
+
+def ask_structured(prompt, model, tool, key, max_tokens=12000):
+    """Get a JSON object from Claude, robustly:
+    1) offer the tool (no forcing, works on every model), 2) accept JSON written as text,
+    3) ask again once, 4) if tools are rejected, fall back to plain JSON + a repair pass."""
+    msgs = [{"role": "user", "content": prompt + f"\n\nReturn the result by calling the {tool['name']} tool."}]
+    for attempt in range(3):
+        code, js = claude_call({"model": model, "max_tokens": max_tokens, "messages": msgs, "tools": [tool]})
+        if code == 400 and "tool" in err_msg(js).lower():
+            break  # tools not accepted -> plain JSON route below
+        if code != 200:
+            raise RuntimeError(f"Claude {code}: {err_msg(js)}")
+        out = tool_input(js, tool["name"])
+        if out is not None:
+            return out
+        text = "".join(b.get("text", "") for b in js.get("content", []) if b.get("type") == "text")
+        out = parse_json(text, key=key)
+        if key in out:
+            return out
+        log(f"{tool['name']}: no tool call (stop={js.get('stop_reason')}), asking again")
+        msgs = msgs + [{"role": "assistant", "content": js.get("content") or [{"type": "text", "text": "..."}]},
+                       {"role": "user", "content": f"Please call the {tool['name']} tool now with the complete result."}]
+    # plain JSON route
+    schema = json.dumps(tool["input_schema"])
+    code, js = claude_call({"model": model, "max_tokens": max_tokens, "messages": [{"role": "user", "content":
+        prompt + f"\n\nReply with ONE valid JSON object only (no other text) matching this schema: {schema}. "
+                 "Escape any double quotes inside strings."}]})
     if code != 200:
-        raise RuntimeError(f"Claude draft failed ({code})")
-    out = tool_input(js, "submit_draft")
-    if out is None:
-        raise RuntimeError("Claude did not return a draft")
-    return out
+        raise RuntimeError(f"Claude {code}: {err_msg(js)}")
+    text = "".join(b.get("text", "") for b in js.get("content", []) if b.get("type") == "text")
+    out = parse_json(text, key=key)
+    if key in out:
+        return out
+    code, js = claude_call({"model": model, "max_tokens": max_tokens, "messages": [{"role": "user", "content":
+        "Fix this into ONE valid JSON object. Output only the JSON.\n\n" + text[:60000]}]})
+    text = "".join(b.get("text", "") for b in js.get("content", []) if b.get("type") == "text") if code == 200 else ""
+    out = parse_json(text, key=key)
+    if key in out:
+        return out
+    raise RuntimeError(f"could not get valid {tool['name']} result")
+
+
+def draft_with_claude(prompt, model):
+    return ask_structured(prompt, model, DRAFT_TOOL, key="india")
 
 
 VERIFY_PROMPT = """You are the fact-checker for "Around Us", a news page whose credibility depends on being right.
@@ -391,8 +429,15 @@ ITEMS WITH EVIDENCE:
 """
 
 
-def verify_section(section, items, evidence, model, max_searches):
-    """Fact-check one slide. Returns ((items, removed), note) or (None, note) on failure."""
+EVIDENCE_ONLY = """
+NOTE: web search is NOT available today. Confirm items ONLY from the evidence shown:
+keep an item only if its evidence shows 2+ different outlets or an official source, and every number in the line
+appears in the evidence headlines. Remove everything else. Leave "url" empty.
+"""
+
+
+def verify_section(section, items, evidence, model, max_searches, web=True):
+    """Fact-check one slide. Returns ((items, removed), mode) or (None, reason)."""
     payload = []
     for it in items:
         ev = [evidence[i] for i in it.get("ids", []) if i in evidence]
@@ -400,21 +445,31 @@ def verify_section(section, items, evidence, model, max_searches):
                         "evidence": [f'{e["title"]} | {e["outlet"]}' + (f' | also: {", ".join(e["also"])}' if e["also"] else "")
                                      for e in ev]})
     prompt = VERIFY_PROMPT.format(section=section, payload=json.dumps(payload, ensure_ascii=False, indent=1))
+    if not web:
+        try:
+            out = ask_structured(prompt + EVIDENCE_ONLY, model, CHECK_TOOL, key="items", max_tokens=8000)
+            return (out.get("items") or [], out.get("removed") or []), "evidence"
+        except Exception as e:
+            return None, str(e)[:120]
     msgs = [{"role": "user", "content": prompt}]
     tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": max_searches}, CHECK_TOOL]
-    for _ in range(5):
-        code, js = claude_call({"model": model, "max_tokens": 6000, "messages": msgs, "tools": tools})
+    for _ in range(6):
+        code, js = claude_call({"model": model, "max_tokens": 12000, "messages": msgs, "tools": tools})
+        if code == 400:
+            return None, "NO_WEB:" + err_msg(js)
         if code != 200:
-            err = (js.get("error") or {}).get("message", "") if isinstance(js, dict) else ""
-            return None, f"{code} {err[:100]}"
+            return None, f"{code} {err_msg(js)}"
         out = tool_input(js, "submit_check")
         if out is not None:
-            return (out.get("items") or [], out.get("removed") or []), "ok"
-        if js.get("stop_reason") not in ("pause_turn", "end_turn"):
-            break
-        msgs = msgs + [{"role": "assistant", "content": js["content"]}]
-        if js.get("stop_reason") == "end_turn":  # answered in text instead of the tool: ask once more
-            msgs.append({"role": "user", "content": "Now call submit_check with the final result."})
+            return (out.get("items") or [], out.get("removed") or []), "web"
+        text = "".join(b.get("text", "") for b in js.get("content", []) if b.get("type") == "text")
+        parsed = parse_json(text, key="items")
+        if "items" in parsed:
+            return (parsed.get("items") or [], parsed.get("removed") or []), "web"
+        stop = js.get("stop_reason")
+        msgs = msgs + [{"role": "assistant", "content": js.get("content") or [{"type": "text", "text": "..."}]}]
+        if stop != "pause_turn":  # end_turn / max_tokens without a result: ask for it
+            msgs.append({"role": "user", "content": "Stop searching. Call submit_check now with the final result."})
     return None, "no result submitted"
 
 
@@ -439,7 +494,7 @@ def credible_domain(url):
 
 
 def page_text(url):
-    code, raw = http("GET", url, raw=True, timeout=20)
+    code, raw = http("GET", url, raw=True, timeout=12)
     if code != 200 or not raw:
         return None
     txt = raw.decode("utf-8", "ignore")
@@ -452,54 +507,75 @@ def numbers(text):
     return {n.replace(",", "").rstrip(".") for n in NUM_RE.findall(text or "")}
 
 
-def ground(item, evidence):
-    """Hard checks, no AI: credible domain, page loads, every number appears in the page or headline."""
+def outlets(item, evidence):
+    names = set()
+    for i in item.get("ids", []):
+        if i in evidence:
+            names.add(evidence[i]["outlet"])
+            names.update(evidence[i]["also"])
+    return {n for n in names if n}
+
+
+def ground(item, evidence, mode="web"):
+    """Hard checks, no AI involved."""
+    nums = numbers(item.get("text"))
+    head_txt = " ".join(evidence[i]["title"] for i in item.get("ids", []) if i in evidence)
+    if mode == "evidence":
+        outs = outlets(item, evidence)
+        if len(outs) < 2:
+            return False, "only one outlet, and web check unavailable"
+        missing = [n for n in nums if n not in numbers(head_txt)]
+        if missing:
+            return False, f"number(s) {', '.join(missing)} not in the headlines"
+        item.setdefault("src", sorted(outs)[0])
+        return True, "2+ outlets"
     url = item.get("url", "")
     host = credible_domain(url)
     if not host:
         return False, f"source not on credible list ({urllib.parse.urlparse(url).netloc or 'no link'})"
-    nums = numbers(item.get("text"))
-    head_txt = " ".join(evidence[i]["title"] for i in item.get("ids", []) if i in evidence)
     page = page_text(url)
     if page is None and not nums:
-        item["link_ok"] = False
         return True, f"{host} (page blocked bots; no numbers to check)"
     haystack = numbers((page or "") + " " + head_txt)
     missing = [n for n in nums if n not in haystack]
     if missing:
         where = "article" if page else "headline (article blocked bots)"
         return False, f"number(s) {', '.join(missing)} not found in {where}"
-    item["link_ok"] = page is not None
     return True, host
 
 
 def verify_all(draft, items, model, per_section):
+    from concurrent.futures import ThreadPoolExecutor
     evidence = {it["id"]: it for it in items}
     res, removed, notes = {"caption": draft.get("caption", "")}, [], []
+    web = True
     for sec in ("world", "india", "south", "andhra", "local"):
         d_items = draft.get(sec, [])
+        res[sec] = []
         if not d_items:
-            res[sec] = []
             continue
-        got, note = verify_section(sec, d_items, evidence, model, per_section)
+        got, mode = verify_section(sec, d_items, evidence, model, per_section, web=web)
+        if got is None and mode.startswith("NO_WEB:"):
+            log(f"web search rejected ({mode[7:]}); switching to evidence-only checks")
+            notes.append("web search unavailable: evidence-only (2+ outlets)")
+            web = False
+            got, mode = verify_section(sec, d_items, evidence, model, per_section, web=False)
         if got is None:
-            # could not check: keep only items with 2+ outlets, drop the rest
-            # could not check this slide: publish nothing unverified for it
-            res[sec] = []
             removed += [{"text": i["text"], "reason": "fact-check unavailable, not published"} for i in d_items]
-            notes.append(f"{sec}: check failed ({note})")
-        else:
-            kept, rem = got
-            removed += rem
-            res[sec] = []
-            for it in kept:
-                ok, why = ground(it, evidence)
-                if ok:
-                    res[sec].append(it)
-                else:
-                    removed.append({"text": it.get("text", ""), "reason": why})
-            time.sleep(0.2)
-        log(f"verify {sec}: {len(d_items)} drafted -> {len(res[sec])} kept")
+            notes.append(f"{sec}: check failed ({mode})")
+            log(f"verify {sec}: FAILED ({mode})")
+            continue
+        kept, rem = got
+        removed += [r for r in rem if isinstance(r, dict)]
+        kept = [k for k in kept if isinstance(k, dict) and (k.get("text") or "").strip()]
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            results = list(pool.map(lambda it: ground(it, evidence, mode), kept))
+        for it, (ok, why) in zip(kept, results):
+            if ok:
+                res[sec].append(it)
+            else:
+                removed.append({"text": it.get("text", ""), "reason": why})
+        log(f"verify {sec}: {len(d_items)} drafted -> {len(res[sec])} kept ({mode})")
     return res, removed, notes
 
 
@@ -541,6 +617,18 @@ def tg(method, **params):
     return http("POST", f"https://api.telegram.org/bot{TG_TOKEN}/{method}", data=params)
 
 
+def tg_photo(path, caption):
+    boundary = "----AroundUs1"
+    with open(path, "rb") as fh:
+        img = fh.read()
+    body = (f'--{boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n{TG_CHAT}\r\n'
+            f'--{boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n{caption[:1024]}\r\n'
+            f'--{boundary}\r\nContent-Disposition: form-data; name="photo"; filename="s.jpg"\r\n'
+            f"Content-Type: image/jpeg\r\n\r\n").encode() + img + f"\r\n--{boundary}--\r\n".encode()
+    return http("POST", f"https://api.telegram.org/bot{TG_TOKEN}/sendPhoto",
+                {"Content-Type": f"multipart/form-data; boundary={boundary}"}, body, timeout=60)
+
+
 def tg_album(paths, caption):
     boundary = "----AroundUs" + hashlib.md5("".join(paths).encode()).hexdigest()
     media = [{"type": "photo", "media": f"attach://p{i}"} for i in range(len(paths))]
@@ -565,7 +653,7 @@ def ig_handle():
 
 
 # ---------------------------------------------------------------- main
-VERSION = "v6 (link + number grounding)"
+VERSION = "v7 (works on all models, fallbacks for every step)"
 
 
 def main():
@@ -614,13 +702,18 @@ def main():
         "{markets}", "yes" if mkts else "no") + listing
     model = pick_model()
     log("model:", model)
-    draft = no_repeats(draft_with_claude(prompt, model))
-    log("draft:", {k: len(v) for k, v in draft.items() if isinstance(v, list)})
-    checked, removed, vnotes = verify_all(draft, items, model, int(os.environ.get("SEARCHES_PER_SLIDE", "5")))
-    res = no_repeats(checked)
-    res["removed"] = removed
-    vnote = "web-checked" + (" · " + "; ".join(vnotes) if vnotes else "")
-    checked = not vnotes
+    try:
+        draft = no_repeats(draft_with_claude(prompt, model))
+        log("draft:", {k: len(v) for k, v in draft.items() if isinstance(v, list)})
+        checked, removed, vnotes = verify_all(draft, items, model, int(os.environ.get("SEARCHES_PER_SLIDE", "5")))
+        res = no_repeats(checked)
+        res["removed"] = removed
+        vnote = "checked" + (" · " + "; ".join(vnotes) if vnotes else "")
+        checked = not vnotes
+    except Exception as e:  # never lose the whole morning: still send rupee + markets
+        log("news step failed:", e)
+        res = {"caption": "", "removed": []}
+        vnote, checked = f"news step failed: {str(e)[:150]}", False
     log("verification:", vnote)
 
     # ---- render slides
@@ -662,9 +755,13 @@ def main():
             f"✏️ corrected: {len(corrected)} · 🗑 removed: {len(res.get('removed', []))}\n"
             f"💱 rupee: {fx_note if fx else 'NOT shown (sources did not agree)'}\n"
             f"📈 markets: {'shown' if mkts else 'not shown today'}\n"
-            + (f"\n⚠️ Data issues:\n" + "\n".join("• " + p for p in problems[:8]) + "\n" if problems else "")
+            + ("\n⚠️ Data issues:\n" + "\n".join("• " + p for p in problems[:8]) + "\n" if problems else "")
             + "\nDry-run mode: nothing is posted to Instagram yet.")
-    if paths:
+    if len(paths) == 1:
+        code, js = tg_photo(paths[0], res.get("caption", ""))
+        if code != 200:
+            log("photo failed:", str(js)[:200])
+    elif paths:
         code, js = tg_album(paths, res.get("caption", ""))
         if code != 200:
             log("album failed:", str(js)[:200])
