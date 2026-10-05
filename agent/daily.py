@@ -30,7 +30,7 @@ from email.utils import parsedate_to_datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import slides  # noqa: E402
 
-VERSION = "v18 (+ 4 PM gainers & losers post)"
+VERSION = "v19 (rupee + Nifty moved to 4 PM)"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SEEN_PATH = os.path.join(ROOT, "data", "seen.json")
 MKT_PATH = os.path.join(ROOT, "data", "markets.json")
@@ -666,17 +666,10 @@ def main():
     items.sort(key=lambda x: -x["cov"])
     log(f"{len(items)} new headlines")
 
-    # 2. numbers
-    fx, fx_note, fx_problems = get_fx()
-    log(f"fx: {len(fx)} currencies", fx_problems)
+    # 2. numbers (morning: world markets only; rupee + Nifty posts are made by agent/eod.py at 4 PM)
+    fx, fx_note, fx_problems = [], "", []
+    nifty = None
     mkts, mkt_problems = get_markets() if (MARKETS_POST and now.weekday() < 5) else ([], [])
-    nifty, nifty_problems = None, []
-    if NIFTY_POST and now.weekday() < 5:
-        try:
-            nifty, nifty_problems = get_nifty()
-        except Exception as e:  # never let the Nifty post stop the others
-            nifty, nifty_problems = None, [f"Nifty post skipped: {str(e)[:120]}"]
-    mkt_problems = mkt_problems + nifty_problems[:6]
 
     # 3. one Claude call
     result, problem = {}, ""
@@ -737,8 +730,7 @@ def main():
     counts = " · ".join(f"{s} {len(posts[s])}" for s in SECTIONS)
     issues = ([problem] if problem else []) + notes + fx_problems + mkt_problems
     summary = (f"☕ Around Us · {now.strftime('%A, %d %b')}\n\n{len(made)} posts ready · {counts}\n"
-               f"💱 rupee: {fx_note if fx else 'not shown (sources did not agree)'}\n"
-               f"📈 markets: {'yes' if mkts else 'no'} · Nifty 50: {'yes' if nifty else 'no'}\n"
+               f"📈 world markets: {'yes' if mkts else 'no'} · Rupee & Nifty posts come at ~4 PM\n"
                + ("\nNotes:\n" + "\n".join("• " + x for x in issues[:10]) + "\n" if issues else "")
                + "\nTap ✅ Post under any post to publish it on Instagram (live in ~5-15 min), or ❌ Skip.")
     queue = {}

@@ -29,6 +29,7 @@ THEMES = {  # tag colour, background, text, sub text, rule
     "INDIA": dict(tag=(232, 119, 46), bg=PAPER, ink=INK, sub=MUTE, rule=LINE),
     "SOUTH INDIA": dict(tag=(20, 135, 115), bg=PAPER, ink=INK, sub=MUTE, rule=LINE),
     "ANDHRA PRADESH": dict(tag=(128, 72, 160), bg=PAPER, ink=INK, sub=MUTE, rule=LINE),
+    "GOLD RATE": dict(tag=(222, 178, 76), bg=(24, 21, 17), ink=PAPER, sub=(172, 162, 142), rule=(72, 63, 50)),
     "NEAR YOU": dict(tag=INK, bg=NEAR, ink=PAPER, sub=(255, 225, 220), rule=(240, 150, 140)),
 }
 W, H, M = 1080, 1350, 56
@@ -87,7 +88,7 @@ def base(kind, title, accent=None, subtitle=None):
     # tag pill
     tf = f("int700", 23)
     tw = d.textlength(kind, font=tf)
-    tag_fg = INK if kind == "MARKETS" else PAPER
+    tag_fg = INK if kind in ("MARKETS", "GOLD RATE") else PAPER
     d.rounded_rectangle([W - M - tw - 44, 62, W - M, 110], radius=24, fill=th["tag"])
     d.text((W - M - tw - 22, 72), kind, font=tf, fill=tag_fg)
     # title, with optional italic accent word
@@ -453,4 +454,324 @@ def movers(data, path):
     date = datetime.now(IST).strftime("%d %b %Y")
     df = f("iserif", 28)
     d.text((W - L - d.textlength(date, font=df), H - 58), date, font=df, fill=th["sub"])
+    im.save(path, quality=93)
+
+
+def gold(data, path, inr):
+    """Gold rate today + last 10 days for up to 4 cities (per 10 grams).
+    Same rate everywhere -> one table + city chips. Different -> city table + 22K per city."""
+    im, d, th, y = base("GOLD RATE", "Gold rate today", accent="Gold")
+    gold_c = th["tag"]
+    card, card2, today_bg = (38, 34, 27), (31, 28, 23), (64, 54, 32)
+    rs = rupee_sign(f("int700", 40)).strip() or "Rs"   # Inter has ₹; Bricolage does not
+    cities = data["cities"]
+    latest = data["latest"]
+    ser = cities[0]["series"]
+    dates = sorted(ser)[-10:]
+
+    def money(v):
+        return f"{rs}{inr(v * 10)}"
+
+    def change(dates_, s, iso):
+        i = dates_.index(iso)
+        if i == 0:
+            return None
+        return (s[iso] - s[dates_[i - 1]]) * 10
+
+    def chg_text(d_, x, cy, v, font, anchor="rm"):
+        if v is None:
+            d_.text((x, cy), "–", font=font, fill=th["sub"], anchor=anchor)
+            return
+        if abs(v) < 0.5:
+            d_.text((x, cy), "no change", font=font, fill=th["sub"], anchor=anchor)
+            return
+        col = UP if v > 0 else DOWN
+        t = f"{inr(abs(v))}"
+        d_.text((x, cy), t, font=font, fill=col, anchor=anchor)
+        arrow(d_, x - d_.textlength(t, font=font) - 24, cy, v > 0, col, 14)
+
+    def day_label(iso):
+        dt = datetime.strptime(iso, "%Y-%m-%d")
+        return ("Today, " if iso == latest else dt.strftime("%a ")) + dt.strftime("%d %b")
+
+    if data["same"]:
+        # city chips
+        cf = f("int600", 24)
+        x = M
+        for c in cities:
+            w = d.textlength(c["name"], font=cf) + 40
+            d.rounded_rectangle([x, y, x + w, y + 48], radius=24, outline=gold_c, width=2)
+            d.text((x + w / 2, y + 24), c["name"], font=cf, fill=th["ink"], anchor="mm")
+            x += w + 14
+        note = (f"Same rate in all {len(cities)} cities  ·  " if len(cities) > 1 else "") + "prices for 10 grams"
+        d.text((M, y + 70), note, font=f("int500", 24), fill=th["sub"])
+        # two big boxes: 24K and 22K
+        top, bh, gap = y + 118, 196, 20
+        bw = (W - 2 * M - gap) / 2
+        today = ser[latest]
+        for i, (lab, k) in enumerate((("24 CARAT", "k24"), ("22 CARAT", "k22"))):
+            x0 = M + i * (bw + gap)
+            d.rounded_rectangle([x0, top, x0 + bw, top + bh], radius=20, fill=card)
+            d.text((x0 + 26, top + 24), lab, font=f("int700", 22), fill=gold_c)
+            sub = "pure gold · coins & bars" if k == "k24" else "jewellery gold"
+            d.text((x0 + bw - 26, top + 26), sub, font=f("int500", 19), fill=th["sub"], anchor="ra")
+            sym_f, num_f = f("int700", 50), f("bri800", 64)
+            d.text((x0 + 24, top + 122), rs, font=sym_f, fill=gold_c, anchor="ls")
+            d.text((x0 + 26 + d.textlength(rs, font=sym_f), top + 122), inr(today[k] * 10), font=num_f,
+                   fill=th["ink"], anchor="ls")
+            v = change(dates, {iso: ser[iso][k] for iso in dates}, latest)
+            cy = top + 162
+            if v is None or abs(v) < 0.5:
+                d.text((x0 + 26, cy), "No change from yesterday", font=f("int600", 21), fill=th["sub"], anchor="lm")
+            else:
+                col = UP if v > 0 else DOWN
+                arrow(d, x0 + 28, cy, v > 0, col, 14)
+                d.text((x0 + 50, cy), f"{rs}{inr(abs(v))} vs yesterday", font=f("int600", 21), fill=col, anchor="lm")
+            d.text((x0 + bw - 26, cy), f"{rs}{inr(today[k])} / g", font=f("int500", 20), fill=th["sub"], anchor="rm")
+        # 18K + 10-day range line
+        ly = top + bh + 30
+        lf = f("int500", 22)
+        if today.get("k18"):
+            d.text((M, ly), f"18 carat  {money(today['k18'])}", font=lf, fill=th["ink"])
+        k22 = [(ser[iso]["k22"], iso) for iso in dates]
+        hi, lo = max(k22), min(k22)
+        rng = f"22K in 10 days:  high {money(hi[0])} ({date_label(hi[1])})  ·  low {money(lo[0])} ({date_label(lo[1])})"
+        d.text((W - M, ly), rng, font=f("int500", 21), fill=th["sub"], anchor="ra")
+        # 10-day table
+        ty = ly + 56
+        hf = f("int700", 18)
+        cols = (M + 18, M + 440, M + 600, M + 830, W - M - 18)
+        d.text((cols[0], ty), "DATE", font=hf, fill=th["sub"])
+        for lab, x in zip(("24K · 10 g", "CHANGE", "22K · 10 g", "CHANGE"), cols[1:]):
+            d.text((x, ty), lab, font=hf, fill=th["sub"], anchor="ra")
+        ty += 34
+        rh = min(52, (H - 122 - ty) / max(len(dates), 1))
+        for i, iso in enumerate(reversed(dates)):
+            yy = ty + i * rh
+            fill = today_bg if iso == latest else (card if i % 2 == 0 else None)
+            if fill:
+                d.rounded_rectangle([M, yy, W - M, yy + rh - 5], radius=10, fill=fill)
+            cy = yy + (rh - 5) / 2
+            bold = iso == latest
+            d.text((cols[0], cy), day_label(iso), font=f("int700" if bold else "int500", 23),
+                   fill=gold_c if bold else th["ink"], anchor="lm")
+            for k, xv, xc in (("k24", cols[1], cols[2]), ("k22", cols[3], cols[4])):
+                d.text((xv, cy), money(ser[iso][k]), font=f("int700" if bold else "int600", 24),
+                       fill=th["ink"], anchor="rm")
+                chg_text(d, xc, cy, change(dates, {j: ser[j][k] for j in dates}, iso), f("int600", 20))
+    else:
+        # today, city by city
+        hf = f("int700", 18)
+        cols = (M + 18, M + 520, M + 760, W - M - 18)
+        d.text((cols[0], y), "CITY · TODAY", font=hf, fill=th["sub"])
+        for lab, x in zip(("24K · 10 g", "22K · 10 g", "22K CHANGE"), cols[1:]):
+            d.text((x, y), lab, font=hf, fill=th["sub"], anchor="ra")
+        yy = y + 32
+        for i, c in enumerate(cities):
+            s = c["series"]
+            ds = sorted(s)
+            d.rounded_rectangle([M, yy, W - M, yy + 62], radius=12, fill=card if i % 2 == 0 else card2)
+            cy = yy + 31
+            d.text((cols[0], cy), c["name"], font=f("int700", 27), fill=th["ink"], anchor="lm")
+            d.text((cols[1], cy), money(s[latest]["k24"]), font=f("int700", 30), fill=th["ink"], anchor="rm")
+            d.text((cols[2], cy), money(s[latest]["k22"]), font=f("int700", 30), fill=gold_c, anchor="rm")
+            chg_text(d, cols[3], cy, change(ds, {j: s[j]["k22"] for j in ds}, latest), f("int600", 21))
+            yy += 68
+        # last 10 days, 22K per city
+        ty = yy + 30
+        d.text((M, ty), "22 CARAT · 10 GRAMS · LAST 10 DAYS", font=f("int700", 21), fill=gold_c)
+        ty += 42
+        short = {"Visakhapatnam": "VIZAG"}
+        n = len(cities)
+        first = M + 240
+        step = (W - M - 18 - first) / n
+        xs = [first + step * (j + 1) for j in range(n)]
+        d.text((M + 18, ty), "DATE", font=hf, fill=th["sub"])
+        for c, x in zip(cities, xs):
+            d.text((x, ty), short.get(c["name"], c["name"].upper()), font=hf, fill=th["sub"], anchor="ra")
+        ty += 32
+        rh = min(50, (H - 122 - ty) / max(len(dates), 1))
+        for i, iso in enumerate(reversed(dates)):
+            yy = ty + i * rh
+            fill = today_bg if iso == latest else (card if i % 2 == 0 else None)
+            if fill:
+                d.rounded_rectangle([M, yy, W - M, yy + rh - 5], radius=10, fill=fill)
+            cy = yy + (rh - 5) / 2
+            d.text((M + 18, cy), day_label(iso), font=f("int600", 22), fill=th["ink"], anchor="lm")
+            for c, x in zip(cities, xs):
+                v = c["series"].get(iso)
+                d.text((x, cy), money(v["k22"]) if v else "–", font=f("int600", 22), fill=th["ink"], anchor="rm")
+    src = "Source: GoodReturns" + (" · 22K cross-checked with BankBazaar" if data.get("verified") else "") + \
+          " · Excludes 3% GST, TCS & making charges"
+    footer(d, th, note=src)
+    im.save(path, quality=93)
+
+
+def gold_state(card, path, inr, hint=None):
+    """One state's gold slide: today 24K/22K/18K, price by weight, 10-day 22K chart, 10-day table."""
+    th = THEMES["GOLD RATE"]
+    gold_c, ink, sub = th["tag"], th["ink"], th["sub"]
+    panel, panel2, today_bg = (38, 34, 27), (31, 28, 23), (64, 54, 32)
+    im = Image.new("RGB", (W, H), th["bg"])
+    noise = Image.effect_noise((W, H), 9).convert("L")
+    im = Image.blend(im, Image.merge("RGB", [noise] * 3), 0.04)
+    d = ImageDraw.Draw(im)
+    rs = rupee_sign(f("int700", 40)).strip() or "Rs"
+    ser, latest = card["series"], card["latest"]
+    dates = sorted(ser)[-10:]
+    today = ser[latest]
+
+    def money(v, mult=10):
+        return f"{rs}{inr(v * mult)}"
+
+    def delta(key, iso, mult=10):
+        i = dates.index(iso)
+        if i == 0 or not ser[iso].get(key) or not ser[dates[i - 1]].get(key):
+            return None
+        return (ser[iso][key] - ser[dates[i - 1]][key]) * mult
+
+    def chg(x, cy, v, font, anchor="rm"):
+        if v is None:
+            d.text((x, cy), "–", font=font, fill=sub, anchor=anchor)
+        elif abs(v) < 0.5:
+            d.text((x, cy), "no change", font=font, fill=sub, anchor=anchor)
+        else:
+            col = UP if v > 0 else DOWN
+            t = inr(abs(v))
+            d.text((x, cy), t, font=font, fill=col, anchor=anchor)
+            arrow(d, x - d.textlength(t, font=font) - 22, cy, v > 0, col, 13)
+
+    # header
+    x, y0 = M + 20, 86
+    for r in (21, 14, 7):
+        d.ellipse([x - r, y0 - r, x + r, y0 + r], outline=ink, width=2)
+    d.ellipse([x - 5, y0 - 5, x + 5, y0 + 5], fill=NEAR)
+    d.text((M + 54, 64), "around us", font=f("bri800", 36), fill=ink)
+    tag, tf = "GOLD RATE", f("int700", 23)
+    tw = d.textlength(tag, font=tf)
+    d.rounded_rectangle([W - M - tw - 44, 62, W - M, 110], radius=24, fill=gold_c)
+    d.text((W - M - tw - 22, 72), tag, font=tf, fill=INK)
+    when = datetime.strptime(latest, "%Y-%m-%d").strftime("%a %d %b %Y").upper()
+    d.text((M, 132), f"GOLD RATE · LAST 10 DAYS · {when}", font=f("int700", 22), fill=gold_c)
+    d.text((M - 3, 248), card["state"], font=f("bri800", 86), fill=ink, anchor="ls")
+
+    # no city names on the slide: the state's rate (the rate its cities share) is shown
+    y = 270
+    d.text((M, y), "Prices for 10 grams unless shown", font=f("int500", 22), fill=sub)
+    y += 18
+
+    # today: 24K / 22K / 18K
+    y += 40
+    gap, bh = 16, 138
+    bw = (W - 2 * M - 2 * gap) / 3
+    for i, (lab, k, what) in enumerate((("24 CARAT", "k24", "coins & bars"), ("22 CARAT", "k22", "jewellery"),
+                                        ("18 CARAT", "k18", "light jewellery"))):
+        x0 = M + i * (bw + gap)
+        d.rounded_rectangle([x0, y, x0 + bw, y + bh], radius=18, fill=panel)
+        d.text((x0 + 20, y + 18), lab, font=f("int700", 20), fill=gold_c)
+        d.text((x0 + bw - 20, y + 20), what, font=f("int500", 17), fill=sub, anchor="ra")
+        v = today.get(k)
+        if not v:
+            d.text((x0 + 20, y + 88), "not available", font=f("int600", 24), fill=sub, anchor="ls")
+            continue
+        sym_f, num_f = f("int700", 36), f("bri800", 46)
+        d.text((x0 + 20, y + 88), rs, font=sym_f, fill=gold_c, anchor="ls")
+        d.text((x0 + 22 + d.textlength(rs, font=sym_f), y + 88), inr(v * 10), font=num_f, fill=ink, anchor="ls")
+        dv = delta(k, latest)
+        cy = y + 116
+        if dv is None or abs(dv) < 0.5:
+            d.text((x0 + 20, cy), "no change from yesterday", font=f("int600", 18), fill=sub, anchor="lm")
+        else:
+            col = UP if dv > 0 else DOWN
+            arrow(d, x0 + 22, cy, dv > 0, col, 12)
+            d.text((x0 + 40, cy), f"{rs}{inr(abs(dv))} vs yesterday", font=f("int600", 18), fill=col, anchor="lm")
+
+    # price by weight (left) + 10-day 22K chart (right)
+    y += bh + 18
+    ph = 206
+    pw = 548
+    pw2 = W - 2 * M - gap - pw
+    lx, rx = M, M + pw + gap
+    d.rounded_rectangle([lx, y, lx + pw, y + ph], radius=18, fill=panel2)
+    d.text((lx + 20, y + 16), "PRICE TODAY BY WEIGHT", font=f("int700", 19), fill=gold_c)
+    cols = (lx + 20, lx + 300, lx + 418, lx + pw - 18)
+    hy = y + 54
+    for lab, xx in zip(("24K", "22K", "18K"), cols[1:]):
+        d.text((xx, hy), lab, font=f("int700", 17), fill=sub, anchor="ra")
+    for j, (lab, g) in enumerate((("1 gram", 1), ("8 g (1 sovereign)", 8), ("10 grams", 10))):
+        cy = hy + 50 + j * 42
+        if j % 2 == 0:
+            d.rounded_rectangle([lx + 10, cy - 18, lx + pw - 10, cy + 18], radius=8, fill=panel)
+        d.text((cols[0], cy), lab, font=f("int600", 21), fill=ink, anchor="lm")
+        for k, xx in zip(("k24", "k22", "k18"), cols[1:]):
+            v = today.get(k)
+            d.text((xx, cy), money(v, g) if v else "–", font=f("int600", 21),
+                   fill=gold_c if k == "k22" else ink, anchor="rm")
+
+    d.rounded_rectangle([rx, y, rx + pw2, y + ph], radius=18, fill=panel2)
+    d.text((rx + 20, y + 16), "22 CARAT · 10 g · 10 DAYS", font=f("int700", 19), fill=gold_c)
+    vals = [ser[i]["k22"] * 10 for i in dates]
+    lo, hi = min(vals), max(vals)
+    cx0, cx1, cy0, cy1 = rx + 30, rx + pw2 - 30, y + 58, y + ph - 86
+    span = (hi - lo) or 1
+    pts = [(cx0 + (cx1 - cx0) * i / max(len(vals) - 1, 1),
+            cy1 - (v - lo) / span * (cy1 - cy0) if hi != lo else (cy0 + cy1) / 2) for i, v in enumerate(vals)]
+    for gy in (cy0, cy1):
+        d.line([(cx0, gy), (cx1, gy)], fill=(60, 54, 44), width=1)
+    d.line(pts, fill=gold_c, width=4, joint="curve")
+    for i, (px, py) in enumerate(pts):
+        r = 7 if i == len(pts) - 1 else 4
+        d.ellipse([px - r, py - r, px + r, py + r], fill=gold_c if i == len(pts) - 1 else (140, 116, 60))
+    sf = f("int600", 15)
+    d.text((cx0 - 6, cy1 + 18), date_label(dates[0]), font=sf, fill=sub, anchor="lm")
+    d.text((cx1 + 6, cy1 + 18), date_label(dates[-1]), font=sf, fill=sub, anchor="rm")
+    first, last = vals[0], vals[-1]
+    diff = last - first
+    pct = diff / first * 100 if first else 0
+    hl = f"High {money(hi, 1)}  ·  Low {money(lo, 1)}"
+    d.text((rx + 20, y + ph - 46), hl, font=f("int600", 17), fill=ink, anchor="lm")
+    col = UP if diff > 0 else DOWN if diff < 0 else sub
+    tt = "no change" if abs(diff) < 0.5 else f"{'up' if diff > 0 else 'down'} {rs}{inr(abs(diff))} ({abs(pct):.1f}%)"
+    d.text((rx + 20, y + ph - 20), "10-day change: " + tt, font=f("int700", 17), fill=col, anchor="lm")
+
+    # 10-day table
+    y += ph + 22
+    hf = f("int700", 17)
+    tcols = (M + 18, M + 430, M + 590, M + 820, W - M - 18)
+    d.text((tcols[0], y), "DATE", font=hf, fill=sub)
+    for lab, xx in zip(("24K · 10 g", "CHANGE", "22K · 10 g", "CHANGE"), tcols[1:]):
+        d.text((xx, y), lab, font=hf, fill=sub, anchor="ra")
+    y += 30
+    rh = min(44, (H - 150 - y) / max(len(dates), 1))
+    for i, iso in enumerate(reversed(dates)):
+        yy = y + i * rh
+        fill = today_bg if iso == latest else (panel if i % 2 == 0 else None)
+        if fill:
+            d.rounded_rectangle([M, yy, W - M, yy + rh - 4], radius=9, fill=fill)
+        cy = yy + (rh - 4) / 2
+        bold = iso == latest
+        dt = datetime.strptime(iso, "%Y-%m-%d")
+        lab = ("Today, " if bold else dt.strftime("%a ")) + dt.strftime("%d %b")
+        d.text((tcols[0], cy), lab, font=f("int700" if bold else "int500", 21),
+               fill=gold_c if bold else ink, anchor="lm")
+        for k, xv, xc in (("k24", tcols[1], tcols[2]), ("k22", tcols[3], tcols[4])):
+            d.text((xv, cy), money(ser[iso][k]), font=f("int700" if bold else "int600", 22), fill=ink, anchor="rm")
+            chg(xc, cy, delta(k, iso), f("int600", 18))
+    if hint:   # (text, "next" | "back"); arrow drawn, not a font glyph
+        text, way = hint
+        hf2 = f("int700", 21)
+        tw2 = d.textlength(text, font=hf2)
+        hy2 = H - 140
+        if way == "next":
+            d.text((W - M - 34, hy2), text, font=hf2, fill=gold_c, anchor="rm")
+            d.line([(W - M - 24, hy2), (W - M - 2, hy2)], fill=gold_c, width=3)
+            d.polygon([(W - M, hy2), (W - M - 10, hy2 - 7), (W - M - 10, hy2 + 7)], fill=gold_c)
+        else:
+            d.text((W - M, hy2), text, font=hf2, fill=gold_c, anchor="rm")
+            x2 = W - M - tw2 - 12
+            d.line([(x2 - 22, hy2), (x2, hy2)], fill=gold_c, width=3)
+            d.polygon([(x2 - 24, hy2), (x2 - 14, hy2 - 7), (x2 - 14, hy2 + 7)], fill=gold_c)
+    src = ("Source: GoodReturns" + (" · cross-checked with BankBazaar" if card.get("verified") else "")
+           + " · Excludes 3% GST, TCS & making charges")
+    footer(d, th, note=src)
     im.save(path, quality=93)

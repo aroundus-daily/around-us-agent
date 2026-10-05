@@ -30,6 +30,26 @@ def online(key, tries=12):
     return False
 
 
+EOD_NAMES = ("rupee", "nifty", "movers", "gold")  # sent by their own later runs, not the morning one
+
+
+def tg_album(paths, caption):
+    """Telegram preview of a carousel: all slides as one album (albums can't carry buttons)."""
+    boundary = "----AroundUsAlbum" + str(int(time.time()))
+    media = [{"type": "photo", "media": f"attach://p{i}", **({"caption": caption[:1024]} if i == 0 else {})}
+             for i in range(len(paths))]
+    parts = [f'--{boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n{daily.TG_CHAT}\r\n',
+             f'--{boundary}\r\nContent-Disposition: form-data; name="media"\r\n\r\n{json.dumps(media)}\r\n']
+    body = "".join(parts).encode()
+    for i, p in enumerate(paths):
+        with open(p, "rb") as fh:
+            body += (f'--{boundary}\r\nContent-Disposition: form-data; name="p{i}"; filename="slide{i}.jpg"\r\n'
+                     f"Content-Type: image/jpeg\r\n\r\n").encode() + fh.read() + b"\r\n"
+    body += f"--{boundary}--\r\n".encode()
+    return daily.http("POST", f"https://api.telegram.org/bot{daily.TG_TOKEN}/sendMediaGroup",
+                      {"Content-Type": f"multipart/form-data; boundary={boundary}"}, body, timeout=90)
+
+
 def send_day(day, check_online=True, only=None):
     folder = os.path.join(daily.POSTS_DIR, day)
     with open(os.path.join(folder, "queue.json")) as fh:
@@ -39,18 +59,26 @@ def send_day(day, check_online=True, only=None):
             summary = fh.read()
         daily.tg("sendMessage", chat_id=daily.TG_CHAT, text=summary)
     for key, item in queue.items():
-        if only is not None and key != only:
+        if only is not None and key not in only:
             continue
-        if only is None and item.get("name") == "movers":
+        if only is None and item.get("name") in EOD_NAMES:
             continue
         path = os.path.join(daily.POSTS_DIR, key)
-        if check_online and not online(key):
+        files = [f"{day}/{f}" for f in item.get("files", [])] or [key]
+        if check_online and not all(online(k) for k in files):
             daily.tg("sendMessage", chat_id=daily.TG_CHAT,
-                     text=f"⚠️ {item['name']}: image did not appear online, so no ✅ button. Re-run 'Daily stories'.")
+                     text=f"⚠️ {item['name']}: image did not appear online, so no ✅ button. Re-run its workflow in GitHub Actions.")
             continue
         buttons = [{"text": "✅ Post", "callback_data": f"post|{key}"[:64]},
                    {"text": "❌ Skip", "callback_data": f"skip|{key}"[:64]}]
-        code, js = daily.tg_photo(path, item["caption"], buttons)
+        if len(files) > 1:
+            code, js = tg_album([os.path.join(daily.POSTS_DIR, k) for k in files], item["caption"])
+            if code == 200:
+                code, js = daily.tg("sendMessage", chat_id=daily.TG_CHAT,
+                                    text=f"👆 {item['name']}: {len(files)} slides, posted together as ONE Instagram post.",
+                                    reply_markup={"inline_keyboard": [buttons]})
+        else:
+            code, js = daily.tg_photo(path, item["caption"], buttons)
         if code != 200:
             daily.log(f"telegram {key} failed: {str(js)[:150]}")
         else:
@@ -59,9 +87,17 @@ def send_day(day, check_online=True, only=None):
 
 if __name__ == "__main__":
     day = datetime.now(daily.IST).strftime("%Y-%m-%d")
-    if len(sys.argv) > 1 and sys.argv[1] == "--eod":
-        marker = os.path.join(daily.POSTS_DIR, day, "eod_pending.txt")
+    if len(sys.argv) > 1 and sys.argv[1] in ("--eod", "--gold"):
+        prefix = sys.argv[1][2:]
+        folder = os.path.join(daily.POSTS_DIR, day)
+        marker = os.path.join(folder, f"{prefix}_pending.txt")
         if os.path.exists(marker):
-            send_day(day, only=open(marker).read().strip())
+            summary = os.path.join(folder, f"{prefix}_summary.txt")
+            text = open(summary).read().strip() if os.path.exists(summary) else ""
+            if text:
+                daily.tg("sendMessage", chat_id=daily.TG_CHAT, text=text)
+            keys = [k for k in open(marker).read().split() if k]
+            if keys:
+                send_day(day, only=keys)
     else:
         send_day(sys.argv[1] if len(sys.argv) > 1 else day)

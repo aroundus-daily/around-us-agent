@@ -64,27 +64,57 @@ def image_urls(key):
             f"https://cdn.jsdelivr.net/gh/{REPO}@{BRANCH}/posts/{key}"]
 
 
-def publish(key, caption):
-    """Instagram API: create container -> wait until ready -> publish. Returns (ok, message)."""
+def _create(params):
+    q = urllib.parse.urlencode({**params, "access_token": IG_TOKEN})
+    code, js = http("POST", f"{GRAPH}/{IG_USER}/media?{q}")
+    if code != 200 or "id" not in js:
+        return None, f"create failed ({code}): {ig_error(js)}"
+    return js["id"], ""
+
+
+def _wait(cid, tries=24):
+    """Wait until Instagram has processed a container (up to ~2 minutes)."""
+    for _ in range(tries):
+        c2, st = http("GET", f"{GRAPH}/{cid}?fields=status_code&access_token={IG_TOKEN}")
+        status = st.get("status_code")
+        if status == "FINISHED":
+            return True, ""
+        if status == "ERROR":
+            return False, "Instagram could not process the image"
+        time.sleep(5)
+    return False, "Instagram took too long to process the image"
+
+
+def publish(keys, caption):
+    """Instagram API: one image, or a carousel when several keys are given.
+    create container(s) -> wait until ready -> publish. Returns (ok, permalink or error)."""
+    if isinstance(keys, str):
+        keys = [keys]
     last = ""
-    for url in image_urls(key):
-        q = urllib.parse.urlencode({"image_url": url, "caption": caption, "access_token": IG_TOKEN})
-        code, js = http("POST", f"{GRAPH}/{IG_USER}/media?{q}")
-        if code != 200 or "id" not in js:
-            last = f"create failed ({code}): {ig_error(js)}"
-            log(last, "| url:", url)
+    for which in (0, 1):                 # raw GitHub first, then jsDelivr
+        urls = [image_urls(k)[which] for k in keys]
+        if len(urls) == 1:
+            cid, last = _create({"image_url": urls[0], "caption": caption})
+        else:
+            children = []
+            for u in urls:
+                child, last = _create({"image_url": u, "is_carousel_item": "true"})
+                if not child:
+                    break
+                ok, err = _wait(child)
+                if not ok:
+                    last = err
+                    break
+                children.append(child)
+            cid = None
+            if len(children) == len(urls):
+                cid, last = _create({"media_type": "CAROUSEL", "children": ",".join(children), "caption": caption})
+        if not cid:
+            log(last, "| via", "raw" if which == 0 else "jsdelivr")
             continue
-        cid = js["id"]
-        for _ in range(12):  # up to ~1 minute
-            c2, st = http("GET", f"{GRAPH}/{cid}?fields=status_code&access_token={IG_TOKEN}")
-            status = st.get("status_code")
-            if status == "FINISHED":
-                break
-            if status == "ERROR":
-                last = "Instagram could not process the image"
-                break
-            time.sleep(5)
-        if last == "Instagram could not process the image":
+        ok, err = _wait(cid)
+        if not ok:
+            last = err
             continue
         code, pub = http("POST", f"{GRAPH}/{IG_USER}/media_publish?" +
                          urllib.parse.urlencode({"creation_id": cid, "access_token": IG_TOKEN}))
@@ -94,6 +124,12 @@ def publish(key, caption):
         last = f"publish failed ({code}): {ig_error(pub)}"
         log(last)
     return False, last
+
+
+def post_keys(key, item):
+    """All image keys of a queue item: its 'files' (carousel) or just the key itself."""
+    day = key.split("/")[0]
+    return [f"{day}/{f}" for f in item["files"]] if item.get("files") else [key]
 
 
 def load_queue(day):
@@ -164,12 +200,13 @@ def main():
             tg("editMessageReplyMarkup", chat_id=TG_CHAT, message_id=mid,
                reply_markup={"inline_keyboard": [[{"text": "❌ Skipped", "callback_data": "noop|"}]]})
         elif action == "post":
-            if not image_is_online(key):
+            keys = post_keys(key, item)
+            if not all(image_is_online(k) for k in keys):
                 tg("answerCallbackQuery", callback_query_id=cb["id"],
                    text="Image still uploading. Tap ✅ again in 2 minutes.", show_alert=True)
                 continue
             tg("answerCallbackQuery", callback_query_id=cb["id"], text="Posting to Instagram…")
-            ok, info = publish(key, item["caption"])
+            ok, info = publish(keys, item["caption"])
             if ok:
                 item["status"], item["permalink"] = "posted", info
                 item["posted_at"] = datetime.now(IST).isoformat()
@@ -193,28 +230,34 @@ def main():
 
 
 def refresh_token_daily():
-    marker = os.path.join(ROOT, "data", "token_refreshed.txt")
-    today = datetime.now(IST).strftime("%Y-%m-%d")
+    """Check the Instagram token once a day; never put a token in a Telegram message.
+    Instagram tokens last 60 days. 45 days after the token was last updated, send a reminder to renew it."""
+    marker = os.path.join(ROOT, "data", "token_checked.txt")
+    since_path = os.path.join(ROOT, "data", "token_since.txt")
+    now = datetime.now(IST)
+    today = now.strftime("%Y-%m-%d")
     try:
         if open(marker).read().strip() == today:
             return
     except Exception:
         pass
-    code, js = http("GET", "https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token"
-                           f"&access_token={IG_TOKEN}")
-    if code == 200 and js.get("access_token"):
-        days = int(js.get("expires_in", 0)) // 86400
-        log(f"token refreshed, valid {days} more days")
-        if js["access_token"] != IG_TOKEN:
-            tg("sendMessage", chat_id=TG_CHAT,
-               text="🔑 Instagram gave a NEW access token. Please update the GitHub secret IG_ACCESS_TOKEN "
-                    "with the token below, then delete this message:\n\n" + js["access_token"])
+    code, js = http("GET", f"{GRAPH}/me?fields=user_id,username&access_token={IG_TOKEN}")
+    if code != 200:
+        tg("sendMessage", chat_id=TG_CHAT,
+           text="⚠️ Instagram token is not working: " + ig_error(js) +
+                "\nFix: Meta app → Instagram → API setup → Generate token, then update the GitHub secret IG_ACCESS_TOKEN.")
     else:
-        log("token refresh failed:", ig_error(js))
-        if code != 0:
+        try:
+            since = datetime.strptime(open(since_path).read().strip(), "%Y-%m-%d")
+        except Exception:
+            since = None
+            with open(since_path, "w") as fh:
+                fh.write(today)
+        if since and (now.replace(tzinfo=None) - since).days >= 45:
             tg("sendMessage", chat_id=TG_CHAT,
-               text="⚠️ Instagram token problem: " + ig_error(js) +
-                    "\nGenerate a new token in the Meta app and update the IG_ACCESS_TOKEN secret.")
+               text="🔑 Reminder: your Instagram token is about 45 days old and expires at 60 days.\n"
+                    "Meta app → Instagram → API setup → Generate token → update the GitHub secret IG_ACCESS_TOKEN.\n"
+                    "Then delete data/token_since.txt in the repo so the reminder restarts.")
     with open(marker, "w") as fh:
         fh.write(today)
 
