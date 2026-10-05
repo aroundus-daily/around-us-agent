@@ -31,7 +31,7 @@ from email.utils import parsedate_to_datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import slides  # noqa: E402
 
-VERSION = "v10 (simple: 1 Claude call, 5-10 lines per post, separate posts)"
+VERSION = "v11 (India-only world post, 2-line items)"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SEEN_PATH = os.path.join(ROOT, "data", "seen.json")
 MKT_PATH = os.path.join(ROOT, "data", "markets.json")
@@ -62,9 +62,11 @@ def topic(t):
 
 # feed name -> (section, url)
 FEEDS = {
-    "WORLD":        ("world", topic("WORLD")),
     "INDIA_ABROAD": ("world", gn('India (US OR China OR EU OR Russia OR UN OR trade OR visa OR summit OR exports)')),
-    "INDIANS_ABROAD": ("world", gn('Indians abroad OR NRI OR H-1B OR Gulf Indians', days=2)),
+    "INDIA_GLOBAL": ("world", gn('India ranks OR India wins OR India tops OR "India becomes" OR India global', days=2)),
+    "INDIA_DIPLO":  ("world", gn('India foreign minister OR MEA India OR India bilateral OR India agreement', days=2)),
+    "INDIA_TRADE":  ("world", gn('India exports OR India imports OR India FTA OR India investment abroad', days=2)),
+    "INDIANS_ABROAD": ("world", gn('Indian-origin OR Indians abroad OR NRI OR H-1B OR Gulf Indians', days=2)),
     "NATION":       ("india", topic("NATION")),
     "BUSINESS":     ("india", topic("BUSINESS")),
     "SCI_TECH":     ("india", topic("SCIENCE")),
@@ -309,6 +311,9 @@ def similar(a, b):
     return bool(wa and wb) and common >= 3 and common / min(len(wa), len(wb)) >= 0.6
 
 
+INDIA_RE = re.compile(r"\bIndia(n|ns|'s)?\b|భారత", re.I)
+
+
 def nums(t):
     return {n.replace(",", "") for n in re.findall(r"(?<![A-Za-z])\d[\d,]*(?:\.\d+)?", t or "")
             if not re.fullmatch(r"(19|20)\d\d", n.replace(",", ""))}
@@ -318,10 +323,13 @@ def nums(t):
 EDITOR_PROMPT = """You are the editor of "Around Us", a casual Instagram page for people in and around Giddalur, Andhra Pradesh.
 Rewrite headlines into very simple, short, plain English a 14-year-old understands. No jargon, no hype, no emoji.
 
-Make FIVE posts. For each, pick headlines from the list below (use their [id]) and write ONE line per item,
-max 90 characters, a full simple sentence with the key fact and number. Use ONLY facts in the headline.
-- "world": {world} items: India in the world (deals, trade, visas, Indians abroad, global events that affect India).
-- "india": {india} items: most important or interesting national news. Mix money and prices, Sensex/Nifty, EV, solar,
+Make FIVE posts. For each, pick headlines from the list below (use their [id]) and write ONE item per headline:
+a clear, slightly detailed sentence of 100-160 characters (it should fill about 2 full lines on the image):
+what happened, who, the key number, and why it matters. Use ONLY facts in the headline, never invent details.
+- "world": {world} items about INDIA'S ROLE IN THE WORLD: what India or Indians did, won, signed, ranked, exported,
+  contributed or achieved abroad, or a global decision that directly affects India. EVERY item MUST contain the word
+  "India" or "Indian". Do NOT include world news that has no India link (e.g. a Nobel Prize won by non-Indians).
+- "india": {india} items (100-160 characters each): most important or interesting national news. Mix money and prices, Sensex/Nifty, EV, solar,
   movies and box office, cricket and sports, ISRO and tech, weather, big decisions.
 - "south": {south} items from Tamil Nadu, Karnataka, Kerala, Telangana. "tag" = state name.
 - "andhra": {andhra} items: Andhra Pradesh (government, projects, jobs, Telugu cinema, weather, sports).
@@ -427,7 +435,9 @@ def build(result, items):
                 continue
             if not nums(text) <= nums(h["title"]):  # a number not in the headline: use the headline itself
                 text = h["title"]
-            lines.append({"text": text[:140], "tag": (x.get("tag") or "")[:20], "src": h["outlet"], "date": h["date"]})
+            if sec == "world" and not (INDIA_RE.search(text) and INDIA_RE.search(h["title"])):
+                continue  # India in the world: must be about India
+            lines.append({"text": text[:200], "tag": (x.get("tag") or "")[:20], "src": h["outlet"], "date": h["date"]})
             used_ids.add(h["id"])
             used_text += [text, h["title"]]
             if len(lines) >= MAX_LINES:
@@ -444,7 +454,9 @@ def build(result, items):
         for h in pool:
             if added >= need:
                 break
-            if any(similar(h["title"], t) for t in used_text) or len(h["title"]) > 140:
+            if any(similar(h["title"], t) for t in used_text) or len(h["title"]) > 200:
+                continue
+            if sec == "world" and not INDIA_RE.search(h["title"]):
                 continue
             tag = ""
             if sec == "south":

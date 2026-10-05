@@ -130,7 +130,7 @@ def list_block(d, th, items, y0, y1, numbered=True):
         width = W - 2 * M - num_w
         plan, h = [], 0
         for it in items:
-            lines = wrap(d, it["text"], ft, width)[:3]
+            lines = wrap(d, it["text"], ft, width)[:4]
             meta = " · ".join(x for x in (it.get("tag", ""), it.get("src", ""), date_label(it.get("date", ""))) if x).upper()
             mh = int(size * 0.78) if meta else 0
             plan.append((lines, meta, mh))
