@@ -1,15 +1,18 @@
-"""Around Us - daily agent (dry run: drafts go to Telegram only).
+"""Around Us - daily agent v10 (simple, low cost).
 
-Every morning it builds one carousel post:
-  1. WORLD    India in the world
-  2. RUPEE    rupee vs 8 currencies (3 sources must agree)
-  3. MARKETS  top 10 stock exchanges, last close (weekdays only)
-  4. INDIA    top 10 India stories
-  5. SOUTH    Tamil Nadu, Karnataka, Kerala, Telangana
-  6. ANDHRA   big Andhra Pradesh stories
-  7. NEAR YOU Giddalur and surrounding mandals (only if there is real news)
-Every news line passes: Claude fact-check + credible link + numbers found in the source.
-No story appears on more than one slide.
+Every morning it makes 5-7 SEPARATE Instagram posts (one image + one caption each):
+  1. India in the world        5-10 lines
+  2. Rupee today               8 currencies (3 sources must agree)
+  3. Markets at close          top 10 exchanges (weekdays only; MARKETS_POST=0 turns it off)
+  4. Top 10 in India           10 lines
+  5. Across the South          5-10 lines
+  6. Andhra today              5-10 lines
+  7. Around Giddalur           5-10 lines (only real local headlines)
+
+Accuracy level: MEDIUM. Every line comes from a real published headline. Its source and date are taken
+from that headline by the code (not by AI). Lines whose numbers don't match their headline are replaced by
+the headline itself. If Claude gives fewer than 5 lines, the code fills up with real headlines.
+Cost: one Claude call per day.
 """
 import hashlib
 import html
@@ -22,14 +25,16 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from email.utils import parsedate_to_datetime
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import slides  # noqa: E402
 
+VERSION = "v10 (simple: 1 Claude call, 5-10 lines per post, separate posts)"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SEEN_PATH = os.path.join(ROOT, "data", "seen.json")
+MKT_PATH = os.path.join(ROOT, "data", "markets.json")
 OUT_DIR = os.path.join(ROOT, "out")
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -38,6 +43,11 @@ TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 TG_CHAT = os.environ.get("TELEGRAM_ADMIN_CHAT_ID", "").strip()
 IG_TOKEN = os.environ.get("IG_ACCESS_TOKEN", "").strip()
 MODEL = os.environ.get("CLAUDE_MODEL", "").strip()
+MARKETS_POST = os.environ.get("MARKETS_POST", "1") != "0"
+
+SECTIONS = ("world", "india", "south", "andhra", "local")
+MIN_LINES, MAX_LINES = 5, 10
+TARGET = {"world": 8, "india": 10, "south": 8, "andhra": 8, "local": 8}
 
 
 def gn(q, days=1, lang="en"):
@@ -50,77 +60,44 @@ def topic(t):
     return f"https://news.google.com/rss/headlines/section/topic/{t}?hl=en-IN&gl=IN&ceid=IN:en"
 
 
-# feed name -> (section hint, url)
+# feed name -> (section, url)
 FEEDS = {
-    "WORLD":       ("world", topic("WORLD")),
-    "INDIA_ABROAD": ("world", gn('India (US OR China OR EU OR Russia OR UN OR Pakistan OR trade OR visa OR summit)')),
-    "NATION":      ("india", topic("NATION")),
-    "BUSINESS":    ("india", topic("BUSINESS")),
-    "SCI_TECH":    ("india", topic("SCIENCE")),
-    "SPORTS":      ("india", topic("SPORTS")),
-    "CRICKET":     ("india", gn("India cricket OR IPL OR BCCI OR Team India")),
-    "MARKETS_IN":  ("india", gn("Sensex OR Nifty OR stock market OR IPO")),
-    "EV":          ("india", gn("electric vehicle India sales OR EV India", days=3)),
-    "SOLAR":       ("india", gn("solar power India OR renewable energy India", days=3)),
-    "MOVIES":      ("india", gn("box office collection", days=3)),
-    "TECH_IN":     ("india", gn("India startup OR smartphone India OR UPI OR ISRO", days=2)),
-    "TAMIL_NADU":  ("south", gn("Tamil Nadu OR Chennai")),
-    "KARNATAKA":   ("south", gn("Karnataka OR Bengaluru")),
-    "KERALA":      ("south", gn("Kerala OR Kochi OR Thiruvananthapuram")),
-    "TELANGANA":   ("south", gn("Telangana OR Hyderabad")),
-    "ANDHRA":      ("andhra", gn('"Andhra Pradesh"')),
-    "ANDHRA_CITIES": ("andhra", gn("Amaravati OR Vijayawada OR Visakhapatnam OR Tirupati OR Guntur OR Nellore")),
-    "ANDHRA_TE":   ("andhra", gn("ఆంధ్రప్రదేశ్", lang="te")),
-    "LOCAL":       ("local", gn("Giddalur OR Giddaluru OR Markapuram OR Markapur OR Prakasam OR Cumbum OR Komarolu OR Racherla OR Bestavaripeta OR Ardhaveedu", days=7)),
-    "TOLLYWOOD":   ("andhra", gn("Telugu film box office OR Tollywood", days=3)),
-    "AP_PROJECTS": ("andhra", gn("Polavaram OR Amaravati capital OR Andhra solar OR Andhra investment OR Visakhapatnam port", days=3)),
-    "LOCAL_TE":    ("local", gn("గిద్దలూరు OR మార్కాపురం OR ప్రకాశం OR కంభం OR బేస్తవారిపేట", days=7, lang="te")),
+    "WORLD":        ("world", topic("WORLD")),
+    "INDIA_ABROAD": ("world", gn('India (US OR China OR EU OR Russia OR UN OR trade OR visa OR summit OR exports)')),
+    "INDIANS_ABROAD": ("world", gn('Indians abroad OR NRI OR H-1B OR Gulf Indians', days=2)),
+    "NATION":       ("india", topic("NATION")),
+    "BUSINESS":     ("india", topic("BUSINESS")),
+    "SCI_TECH":     ("india", topic("SCIENCE")),
+    "SPORTS":       ("india", topic("SPORTS")),
+    "CRICKET":      ("india", gn("India cricket OR IPL OR BCCI OR Team India")),
+    "MARKETS_IN":   ("india", gn("Sensex OR Nifty OR stock market OR IPO")),
+    "EV":           ("india", gn("electric vehicle India sales OR EV India", days=3)),
+    "SOLAR":        ("india", gn("solar power India OR renewable energy India", days=3)),
+    "MOVIES":       ("india", gn("box office collection", days=3)),
+    "TECH_IN":      ("india", gn("India startup OR smartphone India OR UPI OR ISRO", days=2)),
+    "TAMIL_NADU":   ("south", gn("Tamil Nadu OR Chennai")),
+    "KARNATAKA":    ("south", gn("Karnataka OR Bengaluru")),
+    "KERALA":       ("south", gn("Kerala OR Kochi OR Thiruvananthapuram")),
+    "TELANGANA":    ("south", gn("Telangana OR Hyderabad")),
+    "ANDHRA":       ("andhra", gn('"Andhra Pradesh"')),
+    "ANDHRA_CITIES": ("andhra", gn("Amaravati OR Vijayawada OR Visakhapatnam OR Tirupati OR Guntur OR Nellore OR Kurnool")),
+    "AP_PROJECTS":  ("andhra", gn("Polavaram OR Amaravati capital OR Andhra investment OR Visakhapatnam port", days=3)),
+    "TOLLYWOOD":    ("andhra", gn("Telugu film box office OR Tollywood", days=3)),
+    "ANDHRA_TE":    ("andhra", gn("ఆంధ్రప్రదేశ్", lang="te")),
+    "LOCAL":        ("local", gn("Giddalur OR Giddaluru OR Markapuram OR Markapur OR Cumbum OR Komarolu OR Racherla OR Bestavaripeta OR Ardhaveedu", days=7)),
+    "PRAKASAM":     ("local", gn("Prakasam OR Ongole OR Nallamala OR Dornala OR Yerragondapalem", days=5)),
+    "LOCAL_TE":     ("local", gn("గిద్దలూరు OR మార్కాపురం OR ప్రకాశం OR కంభం OR బేస్తవారిపేట OR ఒంగోలు", days=7, lang="te")),
 }
 
 FX = [("USD", "US dollar"), ("EUR", "Euro"), ("GBP", "British pound"), ("JPY", "Japanese yen · 100"),
       ("CNY", "Chinese yuan"), ("CAD", "Canadian dollar"), ("SGD", "Singapore dollar"), ("AED", "UAE dirham")]
-EXCHANGES = [  # roughly the 10 largest exchanges by market value
+EXCHANGES = [
     ("NYSE", "NYSE Composite", "^NYA"), ("Nasdaq", "Nasdaq Composite", "^IXIC"),
     ("Shanghai", "SSE Composite", "000001.SS"), ("Japan", "Nikkei 225", "^N225"),
     ("Euronext", "Euronext 100", "^N100"), ("Shenzhen", "SZSE Component", "399001.SZ"),
     ("Hong Kong", "Hang Seng", "^HSI"), ("NSE India", "Nifty 50", "^NSEI"),
     ("BSE India", "Sensex", "^BSESN"), ("London", "FTSE 100", "^FTSE"),
 ]
-
-EDITOR_PROMPT = """You are the editor of "Around Us", a casual Instagram page for people in and around Giddalur, Andhra Pradesh.
-Write for an ordinary person: very simple, short, plain English a 14-year-old understands. No jargon, no hype, no emoji.
-
-Fill these sections from the HEADLINES below. Each item is ONE line, max 90 characters, a full simple sentence with the key fact (who/what + number if any).
-These are CANDIDATES: a fact-checker will remove some, so give the full number asked for.
-Pick INTERESTING, TRENDING stories people will talk about today. Prefer stories with a concrete number
-(amount, %, count, date) and stories covered by many outlets (higher "cov" = more outlets = trending).
-- "world": 9-10 items about INDIA IN THE WORLD (India's deals, visits, trade, visas, Indians abroad, global events that directly affect India).
-- "india": 16 national stories, ordered by importance. Mix: policy, money and prices, stock market (Sensex/Nifty with numbers), EV sales, solar/energy, movies and box office numbers, cricket and other sports, science/ISRO, tech, weather, big court rulings.
-- "south": 10 items from Tamil Nadu, Karnataka, Kerala, Telangana, Puducherry. Each has "tag" = state name.
-- "andhra": 10 Andhra Pradesh stories: government decisions, projects (Amaravati, Polavaram, ports), jobs and investment, weather, Telugu cinema box office, sports.
-- "local": up to 8 items about Giddalur, Markapuram district, Prakasam or nearby mandals (Komarolu, Racherla, Cumbum, Bestavaripeta, Ardhaveedu). Each has "tag" = town name. Empty list if nothing real.
-
-STRICT RULES
-1. NO REPEATS: a story may appear in only ONE section. If a story fits two, put it in the more local one (local > andhra > south > india > world).
-2. Only facts in the headlines. Never invent numbers, names, dates or quotes. If unsure of a detail, leave it out.
-3. Allegations are not facts: "police say...", "X alleges...", "according to...".
-4. Skip: crimes or accidents naming private people, communal/caste stories, party mud-slinging, graphic violence, gossip, health rumours.
-5. "check": true if only ONE outlet reports it (no "also reported by"), else false. Official sources (govt, RBI, ISRO, IMD, police, court) count as confirmed.
-6. "ids": the headline ids you used for that item.
-
-Also write "caption": the Instagram caption for the whole carousel. Format:
-line 1: a short friendly hook about today
-then one line per slide, e.g. "1 · India in the world: ..." (only slides that exist; slide 2 is markets on weekdays)
-then one simple Telugu line
-then "Swipe through →"
-then at most 3 hashtags, always #AroundUs. Max 900 characters.
-
-Submit your answer with the submit_draft tool.
-
-TODAY: {today}. MARKETS SLIDE TODAY: {markets}.
-
-HEADLINES ([id] (feed) cov=N title | outlet | also reported by), most covered first:
-"""
 
 
 def log(*a):
@@ -150,55 +127,6 @@ def http(method, url, headers=None, data=None, timeout=40, raw=False):
         return 0, b"" if raw else {}
 
 
-# ---------------------------------------------------------------- news
-def fetch_feed(name, url, limit=20):
-    code, xml_bytes = http("GET", url, raw=True)
-    if code != 200 or not xml_bytes:
-        log(f"feed {name}: failed ({code})")
-        return []
-    try:
-        root = ET.fromstring(xml_bytes)
-    except ET.ParseError:
-        return []
-    items = []
-    for it in root.iter("item"):
-        title = html.unescape(it.findtext("title") or "").strip()
-        src = it.find("source")
-        outlet = (src.text or "").strip() if src is not None else ""
-        if outlet and title.endswith(" - " + outlet):
-            title = title[: -len(outlet) - 3].strip()
-        desc = html.unescape(it.findtext("description") or "")
-        also = sorted({r.strip() for r in re.findall(r'<font color="#6f6f6f">([^<]+)</font>', desc)} - {outlet})
-        try:
-            pub = parsedate_to_datetime(it.findtext("pubDate") or "").astimezone(IST).strftime("%Y-%m-%d")
-        except Exception:
-            pub = ""
-        items.append({"id": hashlib.sha1(title.lower().encode()).hexdigest()[:10], "feed": name,
-                      "title": title, "outlet": outlet, "also": also[:4], "link": it.findtext("link") or "",
-                      "pub": pub})
-        if len(items) >= limit:
-            break
-    log(f"feed {name}: {len(items)}")
-    return items
-
-
-def load_seen():
-    try:
-        with open(SEEN_PATH) as fh:
-            data = json.load(fh)
-    except Exception:
-        data = {}
-    cutoff = (datetime.now(IST) - timedelta(days=10)).isoformat()
-    return {k: v for k, v in data.items() if v >= cutoff}
-
-
-def save_seen(seen):
-    os.makedirs(os.path.dirname(SEEN_PATH), exist_ok=True)
-    with open(SEEN_PATH, "w") as fh:
-        json.dump(seen, fh, indent=0, sort_keys=True)
-
-
-# ---------------------------------------------------------------- numbers
 def _fx_frankfurter():
     """ECB reference rates (+ previous day for % change)."""
     codes = ",".join(c for c, _ in FX)
@@ -280,7 +208,6 @@ def get_index(symbol):
     return None, None
 
 
-MKT_PATH = os.path.join(ROOT, "data", "markets.json")
 
 
 def get_markets():
@@ -317,7 +244,124 @@ def get_markets():
     return [], problems + [f"only {ok}/10 indices OK, markets slide skipped"]
 
 
-# ---------------------------------------------------------------- Claude
+
+
+# ---------------------------------------------------------------- news
+def fetch_feed(name, section, url, limit=25):
+    code, xml_bytes = http("GET", url, raw=True)
+    if code != 200 or not xml_bytes:
+        log(f"feed {name}: failed ({code})")
+        return []
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError:
+        log(f"feed {name}: unreadable")
+        return []
+    out = []
+    for it in root.iter("item"):
+        title = html.unescape(it.findtext("title") or "").strip()
+        src = it.find("source")
+        outlet = (src.text or "").strip() if src is not None else ""
+        if outlet and title.endswith(" - " + outlet):
+            title = title[: -len(outlet) - 3].strip()
+        if not title or not outlet:
+            continue
+        desc = html.unescape(it.findtext("description") or "")
+        also = sorted({r.strip() for r in re.findall(r'<font color="#6f6f6f">([^<]+)</font>', desc)} - {outlet})
+        try:
+            pub = parsedate_to_datetime(it.findtext("pubDate") or "").astimezone(IST)
+        except Exception:
+            pub = None
+        if pub and (datetime.now(IST) - pub).days > 7:
+            continue
+        out.append({"id": hashlib.sha1(title.lower().encode()).hexdigest()[:10], "feed": name, "section": section,
+                    "title": title, "outlet": outlet, "also": also[:4], "link": it.findtext("link") or "",
+                    "date": pub.strftime("%Y-%m-%d") if pub else ""})
+        if len(out) >= limit:
+            break
+    log(f"feed {name}: {len(out)}")
+    return out
+
+
+def load_seen():
+    try:
+        with open(SEEN_PATH) as fh:
+            data = json.load(fh)
+    except Exception:
+        data = {}
+    cutoff = (datetime.now(IST) - timedelta(days=4)).isoformat()
+    return {k: v for k, v in data.items() if v >= cutoff}
+
+
+def save_seen(seen):
+    os.makedirs(os.path.dirname(SEEN_PATH), exist_ok=True)
+    with open(SEEN_PATH, "w") as fh:
+        json.dump(seen, fh, indent=0, sort_keys=True)
+
+
+def words(t):
+    return set(re.findall(r"[a-z]{4,}", (t or "").lower()))
+
+
+def similar(a, b):
+    wa, wb = words(a), words(b)
+    common = len(wa & wb)
+    return bool(wa and wb) and common >= 3 and common / min(len(wa), len(wb)) >= 0.6
+
+
+def nums(t):
+    return {n.replace(",", "") for n in re.findall(r"(?<![A-Za-z])\d[\d,]*(?:\.\d+)?", t or "")
+            if not re.fullmatch(r"(19|20)\d\d", n.replace(",", ""))}
+
+
+# ---------------------------------------------------------------- Claude (one call)
+EDITOR_PROMPT = """You are the editor of "Around Us", a casual Instagram page for people in and around Giddalur, Andhra Pradesh.
+Rewrite headlines into very simple, short, plain English a 14-year-old understands. No jargon, no hype, no emoji.
+
+Make FIVE posts. For each, pick headlines from the list below (use their [id]) and write ONE line per item,
+max 90 characters, a full simple sentence with the key fact and number. Use ONLY facts in the headline.
+- "world": {world} items: India in the world (deals, trade, visas, Indians abroad, global events that affect India).
+- "india": {india} items: most important or interesting national news. Mix money and prices, Sensex/Nifty, EV, solar,
+  movies and box office, cricket and sports, ISRO and tech, weather, big decisions.
+- "south": {south} items from Tamil Nadu, Karnataka, Kerala, Telangana. "tag" = state name.
+- "andhra": {andhra} items: Andhra Pradesh (government, projects, jobs, Telugu cinema, weather, sports).
+- "local": up to {local} items about Giddalur, Markapuram, Prakasam, Ongole and nearby mandals. "tag" = town name.
+
+Rules: a story goes in only ONE post. Prefer stories with high "cov" (covered by many outlets) and with numbers.
+Skip crime naming private people, communal/caste stories, political mud-slinging, gossip, health rumours.
+Allegations stay allegations ("police say", "X alleges").
+
+Also write "captions": one Instagram caption per post (keys world, india, south, andhra, local): 2 short friendly
+lines about that post, then one simple Telugu line, then max 3 hashtags including #AroundUs. Max 500 characters each.
+
+TODAY: {today}
+
+HEADLINES ([id] (post) cov=N date title | outlet):
+"""
+
+ITEM = {"type": "object", "properties": {"id": {"type": "string"}, "text": {"type": "string"}, "tag": {"type": "string"}},
+        "required": ["id", "text"]}
+DRAFT_TOOL = {"name": "submit_posts", "description": "Submit today's posts.",
+              "input_schema": {"type": "object", "properties": {
+                  **{k: {"type": "array", "items": ITEM} for k in SECTIONS},
+                  "captions": {"type": "object", "properties": {k: {"type": "string"} for k in SECTIONS}}},
+                  "required": list(SECTIONS) + ["captions"]}}
+
+
+def claude_call(body):
+    code, js = 0, {}
+    for attempt in range(3):
+        code, js = http("POST", "https://api.anthropic.com/v1/messages",
+                        {"x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01"}, body, timeout=300)
+        if code == 200:
+            return code, js
+        log(f"Claude error {code}: {str(js)[:200]}")
+        if code in (400, 401, 403, 404):
+            break
+        time.sleep(10 * (attempt + 1))
+    return code, js
+
+
 def pick_model():
     if MODEL:
         return MODEL
@@ -331,430 +375,101 @@ def pick_model():
     return ids[0] if ids else "claude-sonnet-4-5"
 
 
-ITEM = {"type": "object", "properties": {
-    "text": {"type": "string"}, "tag": {"type": "string"}, "ids": {"type": "array", "items": {"type": "string"}},
-    "check": {"type": "boolean"}}, "required": ["text", "ids"]}
-DRAFT_TOOL = {"name": "submit_draft", "description": "Submit today's draft slides.",
-              "input_schema": {"type": "object", "properties": {
-                  **{k: {"type": "array", "items": ITEM} for k in ("world", "india", "south", "andhra", "local")},
-                  "caption": {"type": "string"}},
-                  "required": ["world", "india", "south", "andhra", "local", "caption"]}}
-CHECKED = {"type": "object", "properties": {
-    "text": {"type": "string"}, "tag": {"type": "string"}, "src": {"type": "string"},
-    "url": {"type": "string", "description": "Full URL of the credible article/official page that confirms this exact line, including every number in it."},
-    "date": {"type": "string", "description": "Publication date of the source article, YYYY-MM-DD."},
-    "ids": {"type": "array", "items": {"type": "string"}},
-    "status": {"type": "string", "enum": ["confirmed", "corrected"]}}, "required": ["text", "src", "url", "date", "status"]}
-CHECK_TOOL = {"name": "submit_check", "description": "Submit the fact-checked items for this slide. Call exactly once, at the end.",
-              "input_schema": {"type": "object", "properties": {
-                  "items": {"type": "array", "items": CHECKED},
-                  "removed": {"type": "array", "items": {"type": "object", "properties": {
-                      "text": {"type": "string"}, "reason": {"type": "string"}}, "required": ["text", "reason"]}}},
-                  "required": ["items", "removed"]}}
-
-
-def claude_call(body):
-    for attempt in range(3):
-        code, js = http("POST", "https://api.anthropic.com/v1/messages",
-                        {"x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01"}, body, timeout=300)
-        if code == 200:
-            return 200, js
-        log(f"Claude error {code}: {str(js)[:200]}")
-        if code in (400, 401, 403, 404):
-            return code, js
-        time.sleep(8 * (attempt + 1))
-    return code, js
-
-
-def tool_input(js, name):
-    for b in js.get("content", []):
-        if b.get("type") == "tool_use" and b.get("name") == name:
-            return b.get("input") or {}
-    return None
-
-
-def err_msg(js):
-    return ((js.get("error") or {}).get("message", "") if isinstance(js, dict) else "")[:160]
-
-
-def ask_structured(prompt, model, tool, key, max_tokens=12000):
-    """Get a JSON object from Claude, robustly:
-    1) offer the tool (no forcing, works on every model), 2) accept JSON written as text,
-    3) ask again once, 4) if tools are rejected, fall back to plain JSON + a repair pass."""
-    msgs = [{"role": "user", "content": prompt + f"\n\nReturn the result by calling the {tool['name']} tool."}]
-    for attempt in range(3):
-        code, js = claude_call({"model": model, "max_tokens": max_tokens, "messages": msgs, "tools": [tool]})
-        if code == 400 and "tool" in err_msg(js).lower():
-            break  # tools not accepted -> plain JSON route below
-        if code != 200:
-            raise RuntimeError(f"Claude {code}: {err_msg(js)}")
-        out = tool_input(js, tool["name"])
-        if out is not None:
-            return out
-        text = "".join(b.get("text", "") for b in js.get("content", []) if b.get("type") == "text")
-        out = parse_json(text, key=key)
-        if key in out:
-            return out
-        log(f"{tool['name']}: no tool call (stop={js.get('stop_reason')}), asking again")
-        msgs = msgs + [{"role": "assistant", "content": js.get("content") or [{"type": "text", "text": "..."}]},
-                       {"role": "user", "content": f"Please call the {tool['name']} tool now with the complete result."}]
-    # plain JSON route
-    schema = json.dumps(tool["input_schema"])
-    code, js = claude_call({"model": model, "max_tokens": max_tokens, "messages": [{"role": "user", "content":
-        prompt + f"\n\nReply with ONE valid JSON object only (no other text) matching this schema: {schema}. "
-                 "Escape any double quotes inside strings."}]})
-    if code != 200:
-        raise RuntimeError(f"Claude {code}: {err_msg(js)}")
-    text = "".join(b.get("text", "") for b in js.get("content", []) if b.get("type") == "text")
-    out = parse_json(text, key=key)
-    if key in out:
-        return out
-    code, js = claude_call({"model": model, "max_tokens": max_tokens, "messages": [{"role": "user", "content":
-        "Fix this into ONE valid JSON object. Output only the JSON.\n\n" + text[:60000]}]})
-    text = "".join(b.get("text", "") for b in js.get("content", []) if b.get("type") == "text") if code == 200 else ""
-    out = parse_json(text, key=key)
-    if key in out:
-        return out
-    raise RuntimeError(f"could not get valid {tool['name']} result")
-
-
-def draft_with_claude(prompt, model):
-    return ask_structured(prompt, model, DRAFT_TOOL, key="india")
-
-
-VERIFY_PROMPT = """You are the fact-checker for "Around Us", a news page whose credibility depends on being right.
-Below are today's draft items for the "{section}" slide, each with the EVIDENCE: the headlines and outlets it is based on.
-
-For each item:
-1. CONFIRMED without searching if the evidence shows 2+ different credible outlets, or an official source
-   (government, PIB, RBI, SEBI, ISRO, IMD, Election Commission, courts, police). Just check the wording matches the evidence.
-2. Otherwise use web search to confirm it with a credible source from the last 3 days: official sites or established outlets
-   (The Hindu, Indian Express, Times of India, Hindustan Times, NDTV, Mint, Economic Times, Business Standard, PTI, ANI,
-   Reuters, BBC, AP, Deccan Chronicle, Deccan Herald, Eenadu, Sakshi, Andhra Jyothy, The New Indian Express). No blogs or social posts.
-3. Fix any wrong number, date or name. Where a solid sourced number makes it more useful, add it (keep under 90 characters, simple words).
-4. REMOVE an item only if it is false, misleading, or you cannot confirm it anywhere credible.
-5. Keep allegations as allegations. Do not add new stories.
-Set "src" to the best confirming outlet or TV channel (short name, e.g. "The Hindu", "NDTV", "TV9 Telugu", "PIB"),
-"date" to that article's publication date (YYYY-MM-DD), and "url" to the exact article or official page you used
-(search for it if needed). Every number in the line MUST appear on that page. If you cannot give such a URL, remove the item.
-Set "status": "confirmed" or "corrected".
-
-When finished, call the submit_check tool exactly once with the result.
-
-ITEMS WITH EVIDENCE:
-{payload}
-"""
-
-
-EVIDENCE_ONLY = """
-NOTE: web search is NOT available today. Confirm items ONLY from the evidence shown:
-keep an item only if its evidence shows 2+ different outlets or an official source, and every number in the line
-appears in the evidence headlines. Remove everything else. Leave "url" empty.
-"""
-
-
-def verify_section(section, items, evidence, model, max_searches, web=True):
-    """Fact-check one slide. Returns ((items, removed), mode) or (None, reason)."""
-    payload = []
-    for it in items:
-        ev = [evidence[i] for i in it.get("ids", []) if i in evidence]
-        payload.append({"text": it["text"], "tag": it.get("tag", ""), "ids": it.get("ids", []),
-                        "evidence": [f'{e["title"]} | {e["outlet"]}' + (f' | also: {", ".join(e["also"])}' if e["also"] else "")
-                                     for e in ev]})
-    prompt = VERIFY_PROMPT.format(section=section, payload=json.dumps(payload, ensure_ascii=False, indent=1))
-    if not web:
-        try:
-            out = ask_structured(prompt + EVIDENCE_ONLY, model, CHECK_TOOL, key="items", max_tokens=8000)
-            return (out.get("items") or [], out.get("removed") or []), "evidence"
-        except Exception as e:
-            return None, str(e)[:120]
-    msgs = [{"role": "user", "content": prompt}]
-    tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": max_searches}, CHECK_TOOL]
-    for _ in range(6):
-        code, js = claude_call({"model": model, "max_tokens": 12000, "messages": msgs, "tools": tools})
-        if code == 400:
-            return None, "NO_WEB:" + err_msg(js)
-        if code != 200:
-            return None, f"{code} {err_msg(js)}"
-        out = tool_input(js, "submit_check")
-        if out is not None:
-            return (out.get("items") or [], out.get("removed") or []), "web"
-        text = "".join(b.get("text", "") for b in js.get("content", []) if b.get("type") == "text")
-        parsed = parse_json(text, key="items")
-        if "items" in parsed:
-            return (parsed.get("items") or [], parsed.get("removed") or []), "web"
-        stop = js.get("stop_reason")
-        msgs = msgs + [{"role": "assistant", "content": js.get("content") or [{"type": "text", "text": "..."}]}]
-        if stop != "pause_turn":  # end_turn / max_tokens without a result: ask for it
-            msgs.append({"role": "user", "content": "Stop searching. Call submit_check now with the final result."})
-    return None, "no result submitted"
-
-
-CREDIBLE = (
-    "gov.in", "nic.in", "rbi.org.in", "sebi.gov.in", "isro.gov.in", "imd.gov.in", "eci.gov.in", "un.org", "who.int",
-    "worldbank.org", "imf.org", "thehindu.com", "thehindubusinessline.com", "indianexpress.com", "newindianexpress.com",
-    "timesofindia.indiatimes.com", "economictimes.indiatimes.com", "hindustantimes.com", "livemint.com", "ndtv.com",
-    "ndtvprofit.com", "business-standard.com", "moneycontrol.com", "indiatoday.in", "news18.com", "theprint.in",
-    "scroll.in", "firstpost.com", "deccanherald.com", "deccanchronicle.com", "telanganatoday.com", "thesouthfirst.com",
-    "onmanorama.com", "dtnext.in", "ptinews.com", "aninews.in", "eenadu.net", "sakshi.com", "andhrajyothy.com",
-    "ntnews.com", "tv9telugu.com", "reuters.com", "apnews.com", "bbc.com", "bbc.co.uk", "aljazeera.com", "cnbc.com",
-    "bloomberg.com", "ft.com", "wsj.com", "nytimes.com", "theguardian.com", "espncricinfo.com", "icc-cricket.com",
-    "bcci.tv", "olympics.com", "nasa.gov", "esa.int", "etvbharat.com", "ntvtelugu.com", "10tv.in", "v6velugu.com",
-    "wionews.com", "cnbctv18.com", "indiatvnews.com", "zeebiz.com", "businesstoday.in", "financialexpress.com",
-    "thehansindia.com", "telugu.oneindia.com", "telugu.samayam.com", "abplive.com", "outlookindia.com",
-)
-NUM_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
-
-
-def credible_domain(url):
-    host = urllib.parse.urlparse(url or "").netloc.lower().split(":")[0]
-    host = host[4:] if host.startswith("www.") else host
-    return host if host and any(host == d or host.endswith("." + d) for d in CREDIBLE) else None
-
-
-def page_text(url):
-    code, raw = http("GET", url, raw=True, timeout=12)
-    if code != 200 or not raw:
-        return None
-    txt = raw.decode("utf-8", "ignore")
-    txt = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", txt)
-    txt = html.unescape(re.sub(r"<[^>]+>", " ", txt))
-    return re.sub(r"\s+", " ", txt)
-
-
-def numbers(text):
-    """Numbers that carry a fact. Ignores names like T20, 5G, COVID-19, G20, A320, and plain years."""
-    out = set()
-    for m in re.finditer(r"(?<![A-Za-z0-9])\d[\d,]*(?:\.\d+)?(?![A-Za-z]{1,2}\d)", text or ""):
-        a, b = m.start(), m.end()
-        before = text[a - 1] if a > 0 else " "
-        after = text[b] if b < len(text) else " "
-        if before.isalpha() or before == "-" and a > 1 and text[a - 2].isalpha():
-            continue  # T20, COVID-19, G20
-        if after.isalpha() and text[b:b + 2].upper() in ("G ", "G,", "G.") or text[b:b + 1] in ("G",):
-            continue  # 5G
-        n = m.group(0).replace(",", "").rstrip(".")
-        if re.fullmatch(r"(19|20)\d\d", n):
-            continue  # years
-        out.add(n)
-    return out
-
-
-def all_numbers(text):
-    return {n.replace(",", "").rstrip(".") for n in NUM_RE.findall(text or "")}
-
-
-def outlets(item, evidence):
-    names = set()
-    for i in item.get("ids", []):
-        if i in evidence:
-            names.add(evidence[i]["outlet"])
-            names.update(evidence[i]["also"])
-    return {n for n in names if n}
-
-
-def ground(item, evidence, mode="web"):
-    """Hard checks, no AI involved."""
-    nums = numbers(item.get("text"))
-    head_txt = " ".join(evidence[i]["title"] for i in item.get("ids", []) if i in evidence)
-    if mode == "evidence":
-        outs = outlets(item, evidence)
-        if len(outs) < 2:
-            return False, "only one outlet, and web check unavailable"
-        missing = [n for n in nums if n not in all_numbers(head_txt)]
-        if missing:
-            return False, f"number(s) {', '.join(missing)} not in the headlines"
-        item.setdefault("src", sorted(outs)[0])
-        return True, "2+ outlets"
-    url = item.get("url", "")
-    host = credible_domain(url)
-    outs = outlets(item, evidence)
-    if not host:
-        # no usable link: still OK if 2+ outlets carry it and the numbers are in their headlines
-        if len(outs) >= 2 and all(n in all_numbers(head_txt) for n in nums):
-            item["src"] = item.get("src") or sorted(outs)[0]
-            item["url"] = ""
-            return True, "2+ outlets"
-        return False, f"source not on credible list ({urllib.parse.urlparse(url).netloc or 'no link'})"
-    page = page_text(url)
-    if page is None and not nums:
-        return True, f"{host} (page blocked bots; no numbers to check)"
-    haystack = all_numbers((page or "") + " " + head_txt)
-    missing = [n for n in nums if n not in haystack]
-    if missing:
-        where = "article" if page else "headline (article blocked bots)"
-        return False, f"number(s) {', '.join(missing)} not found in {where}"
-    return True, host
-
-
-
-def verify_all(draft, items, model, per_section):
-    from concurrent.futures import ThreadPoolExecutor
-    evidence = {it["id"]: it for it in items}
-    res, removed, notes = {"caption": draft.get("caption", "")}, [], []
-    web = True
-    for sec in ("world", "india", "south", "andhra", "local"):
-        d_items = draft.get(sec, [])
-        res[sec] = []
-        if not d_items:
-            continue
-        got, mode = verify_section(sec, d_items, evidence, model, per_section, web=web)
-        if got is None and mode.startswith("NO_WEB:"):
-            log(f"web search rejected ({mode[7:]}); switching to evidence-only checks")
-            notes.append("web search unavailable: evidence-only (2+ outlets)")
-            web = False
-            got, mode = verify_section(sec, d_items, evidence, model, per_section, web=False)
-        if got is None:
-            removed += [{"text": i["text"], "reason": "fact-check unavailable, not published"} for i in d_items]
-            notes.append(f"{sec}: check failed ({mode})")
-            log(f"verify {sec}: FAILED ({mode})")
-            continue
-        kept, rem = got
-        removed += [r for r in rem if isinstance(r, dict)]
-        kept = [k for k in kept if isinstance(k, dict) and (k.get("text") or "").strip()]
-        with ThreadPoolExecutor(max_workers=6) as pool:
-            results = list(pool.map(lambda it: ground(it, evidence, mode), kept))
-        for it, (ok, why) in zip(kept, results):
-            if ok:
-                res[sec].append(it)
-            else:
-                removed.append({"text": it.get("text", ""), "reason": why})
-        log(f"verify {sec}: {len(d_items)} drafted -> {len(res[sec])} kept ({mode})")
-    return res, removed, notes
-
-
-def stamp_dates(res, evidence):
-    """Every item gets a 'date' (YYYY-MM-DD) from its source; items older than 7 days are dropped."""
-    today = datetime.now(IST).date()
-    for sec in ("world", "india", "south", "andhra", "local"):
-        keep = []
-        for it in res.get(sec) or []:
-            d = (it.get("date") or "")[:10]
-            feed_dates = sorted(evidence[i]["pub"] for i in it.get("ids", []) if i in evidence and evidence[i].get("pub"))
-            try:
-                dt = datetime.strptime(d, "%Y-%m-%d").date()
-            except ValueError:
-                dt = datetime.strptime(feed_dates[0], "%Y-%m-%d").date() if feed_dates else None
-            if dt and dt > today:
-                dt = today
-            if dt and (today - dt).days > 7:
-                continue  # stale
-            it["date"] = dt.isoformat() if dt else ""
-            keep.append(it)
-        res[sec] = keep
-    return res
-
-
-MIN_ITEMS = 5
-MIN_BY_SLIDE = {"india": 10}
-SLIDE_MAX = {"world": 7, "india": 10, "south": 7, "andhra": 7, "local": 6}
-FILL_TOPICS = {
-    "world": "India's trade deals and diplomacy, Indians abroad and visas, oil and gold prices, global events that affect India, Indian companies abroad",
-    "india": "EV sales numbers, solar and renewable energy, movie box office collections, cricket results, Sensex/Nifty and IPOs, ISRO and science, UPI and tech, jobs, weather, prices",
-    "south": "Tamil Nadu, Karnataka, Kerala, Telangana: Bengaluru and Hyderabad tech and investment, metro and infrastructure, tourism, Tamil/Malayalam/Kannada film box office, weather",
-    "andhra": "Andhra Pradesh: state government decisions and schemes, Amaravati, Polavaram, Visakhapatnam, Tirupati, solar and EV projects, investment and jobs, Telugu film box office, weather",
-    "local": "Giddalur, Markapuram district, Prakasam district, Cumbum, Racherla, Komarolu, Bestavaripeta, Nallamala forest (check Eenadu, Sakshi, Andhra Jyothy, The Hindu Andhra pages)",
-}
-FILL_PROMPT = """You are a reporter for "Around Us", a simple-English Instagram news page for people in Giddalur, Andhra Pradesh.
-The "{section}" slide needs {n} MORE news items from the LAST 48 HOURS. Use web search.
-Topics to look at: {topics}.
-Do NOT repeat these items already on today's slides:
-{existing}
-
-Rules: only items you confirmed on a credible site (official sites, or outlets like The Hindu, Indian Express, Times of India,
-Hindustan Times, NDTV, Mint, Economic Times, Business Standard, PTI, Reuters, BBC, Deccan Chronicle, Eenadu, Sakshi).
-Each item: ONE simple line under 90 characters, with a real number where possible, every number exactly as on the page.
-"url" = the exact article you used. "src" = outlet or TV channel short name. "date" = its publication date (YYYY-MM-DD). "tag" = state or town (for south / local). "status" = "confirmed".
-No crime naming private people, no communal or political mud-slinging, no rumours. If you cannot find {n} solid items, return fewer.
-When finished, call submit_check once (put nothing in "removed")."""
-
-
-def similar(a, b):
-    wa = set(re.findall(r"[a-z]{4,}", a.lower()))
-    wb = set(re.findall(r"[a-z]{4,}", b.lower()))
-    return bool(wa and wb) and len(wa & wb) / min(len(wa), len(wb)) >= 0.6
-
-
-def backfill(res, model, removed):
-    """Top up slides that have fewer than MIN_ITEMS verified items, via web search + the same hard checks."""
-    for sec in ("world", "india", "south", "andhra", "local"):
-        have = res.get(sec) or []
-        need = MIN_BY_SLIDE.get(sec, MIN_ITEMS) - len(have)
-        if need <= 0:
-            continue
-        existing = [it.get("text", "") for k in ("world", "india", "south", "andhra", "local") for it in res.get(k) or []]
-        prompt = FILL_PROMPT.format(section=sec, n=need + 2, topics=FILL_TOPICS[sec],
-                                    existing="\n".join("- " + t for t in existing) or "(none)")
-        msgs = [{"role": "user", "content": prompt}]
-        tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 6}, CHECK_TOOL]
-        found = None
-        for _ in range(6):
-            code, js = claude_call({"model": model, "max_tokens": 12000, "messages": msgs, "tools": tools})
-            if code != 200:
-                log(f"backfill {sec}: {code} {err_msg(js)}")
-                break
-            found = tool_input(js, "submit_check")
-            if found is None:
-                text = "".join(b.get("text", "") for b in js.get("content", []) if b.get("type") == "text")
-                parsed = parse_json(text, key="items")
-                found = parsed if "items" in parsed else None
-            if found is not None:
-                break
-            msgs = msgs + [{"role": "assistant", "content": js.get("content") or [{"type": "text", "text": "..."}]}]
-            if js.get("stop_reason") != "pause_turn":
-                msgs.append({"role": "user", "content": "Call submit_check now with what you found."})
-        if not found:
-            continue
-        added = 0
-        for it in found.get("items") or []:
-            if not isinstance(it, dict) or not (it.get("text") or "").strip():
-                continue
-            if any(similar(it["text"], t) for t in existing):
-                continue
-            it["ids"] = []
-            ok, why = ground(it, {}, "web")
-            if ok and added < need + 1:
-                have.append(it)
-                existing.append(it["text"])
-                added += 1
-            elif not ok:
-                removed.append({"text": it["text"], "reason": "backfill: " + why})
-        res[sec] = have
-        log(f"backfill {sec}: +{added} -> {len(have)} items")
-    return res
-
-
-def parse_json(text, key=None):
-    """Return the last JSON object in text (optionally one containing `key`)."""
-    dec = json.JSONDecoder()
-    best = None
-    for m in re.finditer(r"\{", text):
+def parse_json(text, key):
+    dec, best = json.JSONDecoder(), {}
+    for m in re.finditer(r"\{", text or ""):
         try:
             obj, _ = dec.raw_decode(text[m.start():])
         except ValueError:
             continue
-        if isinstance(obj, dict) and (key is None or key in obj):
+        if isinstance(obj, dict) and key in obj:
             best = obj
-            if key is None:
-                break
-    return best or {}
+    return best
 
 
-def no_repeats(result):
-    """Enforce: a headline id is used on one slide only (local wins, then andhra, south, india, world)."""
-    used, clean = set(), {}
-    for sec in ("local", "andhra", "south", "india", "world"):
-        keep = []
-        for it in result.get(sec, []) or []:
-            ids = set(it.get("ids", []))
-            text = (it.get("text") or "").strip()
-            if not text or (ids and ids & used):
+def texts(js):
+    return "".join(b.get("text", "") for b in js.get("content", []) if b.get("type") == "text")
+
+
+def draft(prompt, model):
+    """One call. Tool offered (never forced). Falls back to JSON text. Returns {} if everything fails."""
+    code, js = claude_call({"model": model, "max_tokens": 12000, "tools": [DRAFT_TOOL],
+                            "messages": [{"role": "user", "content": prompt + "\nSubmit with the submit_posts tool."}]})
+    if code == 200:
+        for b in js.get("content", []):
+            if b.get("type") == "tool_use" and b.get("name") == "submit_posts":
+                return b.get("input") or {}
+        out = parse_json(texts(js), "india")
+        if out:
+            return out
+    # second (and last) try: plain JSON, no tools
+    code, js = claude_call({"model": model, "max_tokens": 12000, "messages": [{"role": "user", "content":
+                            prompt + "\nReply with ONE JSON object only, with keys world, india, south, andhra, local "
+                            "(lists of {id, text, tag}) and captions. Escape quotes inside strings."}]})
+    return parse_json(texts(js), "india") if code == 200 else {}
+
+
+# ---------------------------------------------------------------- build posts (code guarantees 5-10)
+def build(result, items):
+    by_id = {it["id"]: it for it in items}
+    used_ids, used_text, posts, notes = set(), [], {}, []
+    order = ("local", "andhra", "south", "india", "world")  # most local first, so it keeps its stories
+    for sec in order:
+        lines = []
+        for x in (result.get(sec) or []):
+            if not isinstance(x, dict):
                 continue
-            used |= ids
-            keep.append(it)
-        clean[sec] = keep
-    clean["caption"] = result.get("caption", "")
-    return clean
+            h = by_id.get(str(x.get("id", "")).strip("[] "))
+            text = (x.get("text") or "").strip()
+            if not h or h["id"] in used_ids or not text:
+                continue
+            if any(similar(text, t) for t in used_text) or any(similar(h["title"], t) for t in used_text):
+                continue
+            if not nums(text) <= nums(h["title"]):  # a number not in the headline: use the headline itself
+                text = h["title"]
+            lines.append({"text": text[:140], "tag": (x.get("tag") or "")[:20], "src": h["outlet"], "date": h["date"]})
+            used_ids.add(h["id"])
+            used_text += [text, h["title"]]
+            if len(lines) >= MAX_LINES:
+                break
+        posts[sec] = lines
+    # fill any post below the minimum with real headlines from its own feeds (best covered first)
+    for sec in order:
+        need = (10 if sec == "india" else MIN_LINES) - len(posts[sec])
+        if need <= 0:
+            continue
+        pool = sorted((it for it in items if it["section"] == sec and it["id"] not in used_ids),
+                      key=lambda it: (it["cov"], it["date"] or ""), reverse=True)
+        added = 0
+        for h in pool:
+            if added >= need:
+                break
+            if any(similar(h["title"], t) for t in used_text) or len(h["title"]) > 140:
+                continue
+            tag = ""
+            if sec == "south":
+                tag = {"TAMIL_NADU": "Tamil Nadu", "KARNATAKA": "Karnataka", "KERALA": "Kerala",
+                       "TELANGANA": "Telangana"}.get(h["feed"], "")
+            posts[sec].append({"text": h["title"], "tag": tag, "src": h["outlet"], "date": h["date"]})
+            used_ids.add(h["id"])
+            used_text.append(h["title"])
+            added += 1
+        if added:
+            notes.append(f"{sec}: +{added} filled from headlines")
+        if len(posts[sec]) < MIN_LINES:
+            notes.append(f"{sec}: only {len(posts[sec])} real headlines available today")
+    return posts, used_ids, notes
+
+
+DEFAULT_CAPTIONS = {
+    "world": "India in the world today, in one quick read.\nప్రపంచంలో భారత్ ఈరోజు.\n#AroundUs #India",
+    "india": "Today's top stories from across India, in simple words.\nఈరోజు దేశంలో ముఖ్య వార్తలు.\n#AroundUs #India",
+    "south": "What's happening across South India today.\nదక్షిణ భారతంలో ఈరోజు.\n#AroundUs #SouthIndia",
+    "andhra": "Andhra Pradesh today, in one quick read.\nఆంధ్రప్రదేశ్ ఈరోజు.\n#AroundUs #AndhraPradesh",
+    "local": "Around Giddalur today. Problem on your street? DM us, we never share who sent it.\nమన గిద్దలూరు చుట్టూ.\n#AroundUs #Giddalur",
+    "rupee": "How many rupees for 1 dollar, euro, pound, yen, yuan, Canadian & Singapore dollar and dirham today.\nఈరోజు రూపాయి విలువ.\n#AroundUs #Rupee",
+    "markets": "How the world's 10 biggest stock exchanges closed. For information only, not investment advice.\nమార్కెట్లు ఎలా ముగిశాయి.\n#AroundUs #Sensex",
+}
 
 
 # ---------------------------------------------------------------- Telegram
@@ -763,30 +478,15 @@ def tg(method, **params):
 
 
 def tg_photo(path, caption):
-    boundary = "----AroundUs1"
+    boundary = "----AroundUs" + hashlib.md5(path.encode()).hexdigest()
     with open(path, "rb") as fh:
         img = fh.read()
     body = (f'--{boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n{TG_CHAT}\r\n'
             f'--{boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n{caption[:1024]}\r\n'
-            f'--{boundary}\r\nContent-Disposition: form-data; name="photo"; filename="s.jpg"\r\n'
+            f'--{boundary}\r\nContent-Disposition: form-data; name="photo"; filename="post.jpg"\r\n'
             f"Content-Type: image/jpeg\r\n\r\n").encode() + img + f"\r\n--{boundary}--\r\n".encode()
     return http("POST", f"https://api.telegram.org/bot{TG_TOKEN}/sendPhoto",
                 {"Content-Type": f"multipart/form-data; boundary={boundary}"}, body, timeout=60)
-
-
-def tg_album(paths, caption):
-    boundary = "----AroundUs" + hashlib.md5("".join(paths).encode()).hexdigest()
-    media = [{"type": "photo", "media": f"attach://p{i}"} for i in range(len(paths))]
-    media[0]["caption"] = caption[:1024]
-    parts = [f'--{boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n{TG_CHAT}\r\n'.encode(),
-             f'--{boundary}\r\nContent-Disposition: form-data; name="media"\r\n\r\n{json.dumps(media)}\r\n'.encode()]
-    for i, p in enumerate(paths):
-        with open(p, "rb") as fh:
-            parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="p{i}"; filename="s{i}.jpg"\r\n'
-                         f"Content-Type: image/jpeg\r\n\r\n".encode() + fh.read() + b"\r\n")
-    parts.append(f"--{boundary}--\r\n".encode())
-    return http("POST", f"https://api.telegram.org/bot{TG_TOKEN}/sendMediaGroup",
-                {"Content-Type": f"multipart/form-data; boundary={boundary}"}, b"".join(parts), timeout=90)
 
 
 def ig_handle():
@@ -794,13 +494,10 @@ def ig_handle():
         return None
     q = urllib.parse.urlencode({"fields": "username", "access_token": IG_TOKEN})
     code, js = http("GET", f"https://graph.instagram.com/v23.0/me?{q}")
-    return "@" + js["username"] if code == 200 and js.get("username") else None
+    return "@" + js["username"] if code == 200 and isinstance(js, dict) and js.get("username") else None
 
 
 # ---------------------------------------------------------------- main
-VERSION = "v9 (source + date on every line, currency symbols)"
-
-
 def main():
     log("Around Us agent", VERSION)
     for k, v in {"ANTHROPIC_API_KEY": ANTHROPIC_KEY, "TELEGRAM_BOT_TOKEN": TG_TOKEN,
@@ -808,132 +505,108 @@ def main():
         if not v:
             raise SystemExit(f"{k} missing")
     now = datetime.now(IST)
-    weekday = now.weekday() < 5
-    if (h := ig_handle()):
-        slides.HANDLE = h
+    handle = ig_handle()
+    if handle:
+        slides.HANDLE = handle
 
+    # 1. headlines
     seen = load_seen()
-    items, titles = [], set()
-    for name, (_, url) in FEEDS.items():
-        for it in fetch_feed(name, url):
+    items, keys = [], set()
+    for name, (sec, url) in FEEDS.items():
+        for it in fetch_feed(name, sec, url):
             key = re.sub(r"\W+", " ", it["title"].lower())[:70]
-            if it["id"] in seen or key in titles:
+            if it["id"] in seen or key in keys:
                 continue
-            titles.add(key)
+            keys.add(key)
             items.append(it)
-    log(f"{len(items)} new headlines")
-
-    fx, fx_note, fx_problems = get_fx()
-    log(f"fx: {len(fx)} currencies", fx_problems)
-    mkts, mkt_problems = get_markets() if weekday else ([], [])
-
-    # coverage = how many outlets carry roughly the same headline (trending signal)
-    def words(t):
-        return {w for w in re.findall(r"[a-z]{4,}", t.lower())}
     for it in items:
         it["cov"] = 1 + len(it["also"])
     for i, a in enumerate(items):
-        wa = words(a["title"])
         for b in items[i + 1:]:
-            wb = words(b["title"])
-            if wa and wb and len(wa & wb) / min(len(wa), len(wb)) >= 0.6:
+            if similar(a["title"], b["title"]):
                 a["cov"] += 1
                 b["cov"] += 1
     items.sort(key=lambda x: -x["cov"])
-    listing = "\n".join(
-        f'[{it["id"]}] ({it["feed"]}) cov={it["cov"]} {it["pub"]} {it["title"]} | {it["outlet"]}'
-        + (f' | also: {", ".join(it["also"])}' if it["also"] else "") for it in items[:320])
-    prompt = EDITOR_PROMPT.replace("{today}", now.strftime("%A %d %B %Y")).replace(
-        "{markets}", "yes" if mkts else "no") + listing
-    model = pick_model()
-    log("model:", model)
-    try:
-        draft = no_repeats(draft_with_claude(prompt, model))
-        log("draft:", {k: len(v) for k, v in draft.items() if isinstance(v, list)})
-        checked, removed, vnotes = verify_all(draft, items, model, int(os.environ.get("SEARCHES_PER_SLIDE", "5")))
-        res = no_repeats(checked)
-        if not any("web search unavailable" in n for n in vnotes):
-            res = backfill(res, model, removed)
-        res = stamp_dates(res, {it["id"]: it for it in items})
-        for sec, cap in SLIDE_MAX.items():
-            res[sec] = (res.get(sec) or [])[:cap]
-        res["removed"] = removed
-        log("final:", {k: len(res[k]) for k in SLIDE_MAX})
-        vnote = "checked" + (" · " + "; ".join(vnotes) if vnotes else "")
-        checked = not vnotes
-    except Exception as e:  # never lose the whole morning: still send rupee + markets
-        log("news step failed:", e)
-        res = {"caption": "", "removed": []}
-        vnote, checked = f"news step failed: {str(e)[:150]}", False
-    log("verification:", vnote)
+    log(f"{len(items)} new headlines")
 
-    # ---- render slides
+    # 2. numbers
+    fx, fx_note, fx_problems = get_fx()
+    log(f"fx: {len(fx)} currencies", fx_problems)
+    mkts, mkt_problems = get_markets() if (MARKETS_POST and now.weekday() < 5) else ([], [])
+
+    # 3. one Claude call
+    result, problem = {}, ""
+    try:
+        model = pick_model()
+        log("model:", model)
+        per_sec = {s: [it for it in items if it["section"] == s][:70] for s in SECTIONS}
+        listing = "\n".join(f'[{it["id"]}] ({it["section"]}) cov={it["cov"]} {it["date"]} {it["title"]} | {it["outlet"]}'
+                            for s in SECTIONS for it in per_sec[s])
+        prompt = EDITOR_PROMPT.format(today=now.strftime("%A %d %B %Y"), **TARGET) + listing
+        result = draft(prompt, model)
+        log("claude:", {s: len(result.get(s) or []) for s in SECTIONS})
+    except Exception as e:
+        problem = f"Claude step failed ({str(e)[:120]}); posts built from headlines only"
+        log(problem)
+    if not result:
+        problem = problem or "Claude gave no usable answer; posts built from headlines only"
+
+    # 4. posts (code enforces 5-10 lines with source + date)
+    posts, used_ids, notes = build(result, items)
+    log("final:", {s: len(posts[s]) for s in SECTIONS}, notes)
+    captions = {**DEFAULT_CAPTIONS, **{k: v for k, v in (result.get("captions") or {}).items()
+                                       if isinstance(v, str) and v.strip()}}
+
+    # 5. render: one image per post
     os.makedirs(OUT_DIR, exist_ok=True)
     plan = []
-    for sec in ("world", "india", "south", "andhra", "local"):
-        res[sec] = res.get(sec) or []
-    if res["world"]:
-        plan.append(("world", lambda p, pg: slides.digest("WORLD", "India in the world", "world", res["world"][:7], p, pg)))
+    if posts["world"]:
+        plan.append(("world", lambda p: slides.digest("WORLD", "India in the world", "world", posts["world"], p)))
     if fx:
-        plan.append(("rupee", lambda p, pg: slides.rupee(fx, p, pg, note=fx_note)))
+        plan.append(("rupee", lambda p: slides.rupee(fx, p, note=fx_note)))
     if mkts:
-        plan.append(("markets", lambda p, pg: slides.markets(mkts, p, pg)))
-    if res["india"]:
-        plan.append(("india", lambda p, pg: slides.digest("INDIA", f"Top {min(len(res['india']), 10)} in India", "India", res["india"][:10], p, pg)))
-    if res["south"]:
-        plan.append(("south", lambda p, pg: slides.digest("SOUTH INDIA", "Across the South", "South", res["south"][:7], p, pg)))
-    if res["andhra"]:
-        plan.append(("andhra", lambda p, pg: slides.digest("ANDHRA PRADESH", "Andhra today", "Andhra", res["andhra"][:7], p, pg)))
-    if res["local"]:
-        plan.append(("local", lambda p, pg: slides.digest("NEAR YOU", "Around Giddalur", "Giddalur", res["local"][:5], p, pg,
-                                                           note="Problem on your street? DM us. We never share who sent it.")))
-    paths = []
+        plan.append(("markets", lambda p: slides.markets(mkts, p)))
+    if posts["india"]:
+        n = len(posts["india"])
+        plan.append(("india", lambda p: slides.digest("INDIA", f"Top {n} in India", "India", posts["india"], p)))
+    if posts["south"]:
+        plan.append(("south", lambda p: slides.digest("SOUTH INDIA", "Across the South", "South", posts["south"], p)))
+    if posts["andhra"]:
+        plan.append(("andhra", lambda p: slides.digest("ANDHRA PRADESH", "Andhra today", "Andhra", posts["andhra"], p)))
+    if posts["local"]:
+        plan.append(("local", lambda p: slides.digest("NEAR YOU", "Around Giddalur", "Giddalur", posts["local"], p,
+                                                       note="Problem on your street? DM us. We never share who sent it.")))
+    made = []
     for i, (name, fn) in enumerate(plan, 1):
-        p = os.path.join(OUT_DIR, f"{i:02d}-{name}.jpg")
-        fn(p, f"{i}/{len(plan)}")
-        paths.append(p)
-    log(f"rendered {len(paths)} slides")
+        path = os.path.join(OUT_DIR, f"{i:02d}-{name}.jpg")
+        try:
+            fn(path)
+            made.append((name, path))
+        except Exception as e:
+            log(f"render {name} failed: {e}")
+    log(f"rendered {len(made)} posts")
 
-    # ---- send to Telegram
-    counts = " · ".join(f"{k} {len(res[k])}" for k in ("world", "india", "south", "andhra", "local"))
-    corrected = [it for sec in ("world", "india", "south", "andhra", "local") for it in res[sec]
-                 if it.get("status") == "corrected"]
-    problems = fx_problems + mkt_problems
+    # 6. Telegram: a summary, then each post separately (image + its own caption)
+    counts = " · ".join(f"{s} {len(posts[s])}" for s in SECTIONS)
+    issues = ([problem] if problem else []) + notes + fx_problems + mkt_problems
     tg("sendMessage", chat_id=TG_CHAT,
-       text=f"☕ Around Us · {now.strftime('%A, %d %b')}\n\n"
-            f"{len(items)} headlines scanned → {len(paths)} slides\n{counts}\n\n"
-            f"Fact-check: {'✅ ' + vnote if checked else '⚠️ ' + vnote}\n"
-            f"✏️ corrected: {len(corrected)} · 🗑 removed: {len(res.get('removed', []))}\n"
-            f"💱 rupee: {fx_note if fx else 'NOT shown (sources did not agree)'}\n"
-            f"📈 markets: {'shown' if mkts else 'not shown today'}\n"
-            + ("\n⚠️ Data issues:\n" + "\n".join("• " + p for p in problems[:8]) + "\n" if problems else "")
-            + "\nDry-run mode: nothing is posted to Instagram yet.")
-    if len(paths) == 1:
-        code, js = tg_photo(paths[0], res.get("caption", ""))
+       text=f"☕ Around Us · {now.strftime('%A, %d %b')}\n\n{len(made)} posts ready · {counts}\n"
+            f"💱 rupee: {fx_note if fx else 'not shown (sources did not agree)'}\n"
+            f"📈 markets: {'yes' if mkts else 'no'}\n"
+            + ("\nNotes:\n" + "\n".join("• " + x for x in issues[:10]) + "\n" if issues else "")
+            + "\nEach post follows as a separate message. Dry run: nothing is posted to Instagram yet.")
+    for n, (name, path) in enumerate(made, 1):
+        cap = captions.get(name, "")
+        srcs = sorted({x["src"] for x in posts.get(name, []) if x.get("src")})
+        if srcs:
+            cap = cap.rstrip() + "\n\nSources: " + ", ".join(srcs[:8])
+        code, js = tg_photo(path, f"POST {n}/{len(made)}\n\n" + cap)
         if code != 200:
-            log("photo failed:", str(js)[:200])
-    elif paths:
-        code, js = tg_album(paths, res.get("caption", ""))
-        if code != 200:
-            log("album failed:", str(js)[:200])
-    link_lines = []
-    for sec in ("world", "india", "south", "andhra", "local"):
-        for n, it in enumerate(res[sec], 1):
-            if it.get("url"):
-                link_lines.append(f"[{sec} {n}] {it.get('src', '')} · {it.get('date', '')}: {it['url']}")
-    if link_lines:
-        msg = "🔗 Sources (tap to spot-check before approving):\n\n" + "\n".join(link_lines)
-        for i in range(0, len(msg), 3800):
-            tg("sendMessage", chat_id=TG_CHAT, disable_web_page_preview=True, text=msg[i:i + 3800])
-    if res.get("removed"):
-        tg("sendMessage", chat_id=TG_CHAT,
-           text="🗑 Removed by fact-check:\n\n" + "\n".join(
-               f"• {r.get('text', '')}\n  ↳ {r.get('reason', '')}" for r in res["removed"])[:3800])
+            log(f"telegram post {name} failed: {str(js)[:150]}")
+
     stamp = now.isoformat()
-    for sec in ("world", "india", "south", "andhra", "local"):
-        for it in res[sec]:
-            for x in it.get("ids", []):
-                seen[x] = stamp
+    for x in used_ids:
+        seen[x] = stamp
     save_seen(seen)
     log("done")
 
