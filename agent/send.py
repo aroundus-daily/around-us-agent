@@ -30,14 +30,19 @@ def online(key, tries=12):
     return False
 
 
-def send_day(day, check_online=True):
+def send_day(day, check_online=True, only=None):
     folder = os.path.join(daily.POSTS_DIR, day)
     with open(os.path.join(folder, "queue.json")) as fh:
         queue = json.load(fh)
-    with open(os.path.join(folder, "summary.txt")) as fh:
-        summary = fh.read()
-    daily.tg("sendMessage", chat_id=daily.TG_CHAT, text=summary)
+    if only is None:
+        with open(os.path.join(folder, "summary.txt")) as fh:
+            summary = fh.read()
+        daily.tg("sendMessage", chat_id=daily.TG_CHAT, text=summary)
     for key, item in queue.items():
+        if only is not None and key != only:
+            continue
+        if only is None and item.get("name") == "movers":
+            continue
         path = os.path.join(daily.POSTS_DIR, key)
         if check_online and not online(key):
             daily.tg("sendMessage", chat_id=daily.TG_CHAT,
@@ -53,5 +58,10 @@ def send_day(day, check_online=True):
 
 
 if __name__ == "__main__":
-    day = sys.argv[1] if len(sys.argv) > 1 else datetime.now(daily.IST).strftime("%Y-%m-%d")
-    send_day(day)
+    day = datetime.now(daily.IST).strftime("%Y-%m-%d")
+    if len(sys.argv) > 1 and sys.argv[1] == "--eod":
+        marker = os.path.join(daily.POSTS_DIR, day, "eod_pending.txt")
+        if os.path.exists(marker):
+            send_day(day, only=open(marker).read().strip())
+    else:
+        send_day(sys.argv[1] if len(sys.argv) > 1 else day)

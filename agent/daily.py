@@ -7,7 +7,6 @@ Every morning it makes 5-7 SEPARATE Instagram posts (one image + one caption eac
   4. Top 10 in India           10 lines
   5. Across the South          5-10 lines
   6. Andhra today              5-10 lines
-  7. Around Giddalur           5-10 lines (only real local headlines)
 
 Accuracy level: MEDIUM. Every line comes from a real published headline. Its source and date are taken
 from that headline by the code (not by AI). Lines whose numbers don't match their headline are replaced by
@@ -31,7 +30,7 @@ from email.utils import parsedate_to_datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import slides  # noqa: E402
 
-VERSION = "v16 (upload images first, then Telegram)"
+VERSION = "v18 (+ 4 PM gainers & losers post)"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SEEN_PATH = os.path.join(ROOT, "data", "seen.json")
 MKT_PATH = os.path.join(ROOT, "data", "markets.json")
@@ -45,9 +44,9 @@ IG_TOKEN = os.environ.get("IG_ACCESS_TOKEN", "").strip()
 MODEL = os.environ.get("CLAUDE_MODEL", "").strip()
 MARKETS_POST = os.environ.get("MARKETS_POST", "1") != "0"
 
-SECTIONS = ("world", "india", "south", "andhra", "local")
+SECTIONS = ("world", "india", "south", "andhra")
 MIN_LINES, MAX_LINES = 5, 10
-TARGET = {"world": 8, "india": 10, "south": 8, "andhra": 8, "local": 8}
+TARGET = {"world": 8, "india": 10, "south": 8, "andhra": 8}
 
 
 def gn(q, days=1, lang="en"):
@@ -86,9 +85,6 @@ FEEDS = {
     "AP_PROJECTS":  ("andhra", gn("Polavaram OR Amaravati capital OR Andhra investment OR Visakhapatnam port", days=3)),
     "TOLLYWOOD":    ("andhra", gn("Telugu film box office OR Tollywood", days=3)),
     "ANDHRA_TE":    ("andhra", gn("ఆంధ్రప్రదేశ్", lang="te")),
-    "LOCAL":        ("local", gn("Giddalur OR Giddaluru OR Markapuram OR Markapur OR Cumbum OR Komarolu OR Racherla OR Bestavaripeta OR Ardhaveedu", days=7)),
-    "PRAKASAM":     ("local", gn("Prakasam OR Ongole OR Nallamala OR Dornala OR Yerragondapalem", days=5)),
-    "LOCAL_TE":     ("local", gn("గిద్దలూరు OR మార్కాపురం OR ప్రకాశం OR కంభం OR బేస్తవారిపేట OR ఒంగోలు", days=7, lang="te")),
 }
 
 FX = [("USD", "US dollar"), ("EUR", "Euro"), ("GBP", "British pound"), ("JPY", "Japanese yen · 100"),
@@ -431,7 +427,7 @@ Rewrite headlines into very simple, short, plain English a 14-year-old understan
 Some headlines are in Telugu: translate them into simple English. Item text must be ENGLISH ONLY (no Telugu script),
 because the images cannot show Telugu letters. Captions may include one Telugu line.
 
-Make FIVE posts. For each, pick headlines from the list below (use their [id]) and write ONE item per headline:
+Make FOUR posts. For each, pick headlines from the list below (use their [id]) and write ONE item per headline:
 a clear, slightly detailed sentence of 100-160 characters (it should fill about 2 full lines on the image):
 what happened, who, the key number, and why it matters. Use ONLY facts in the headline, never invent details.
 - "world": {world} items about INDIA'S ROLE IN THE WORLD: what India or Indians did, won, signed, ranked, exported,
@@ -441,13 +437,12 @@ what happened, who, the key number, and why it matters. Use ONLY facts in the he
   movies and box office, cricket and sports, ISRO and tech, weather, big decisions.
 - "south": {south} items from Tamil Nadu, Karnataka, Kerala, Telangana. "tag" = state name.
 - "andhra": {andhra} items: Andhra Pradesh (government, projects, jobs, Telugu cinema, weather, sports).
-- "local": up to {local} items about Giddalur, Markapuram, Prakasam, Ongole and nearby mandals. "tag" = town name.
 
 Rules: a story goes in only ONE post. Prefer stories with high "cov" (covered by many outlets) and with numbers.
 Skip crime naming private people, communal/caste stories, political mud-slinging, gossip, health rumours.
 Allegations stay allegations ("police say", "X alleges").
 
-Also write "captions": one Instagram caption per post (keys world, india, south, andhra, local): 2 short friendly
+Also write "captions": one Instagram caption per post (keys world, india, south, andhra): 2 short friendly
 lines about that post, then one simple Telugu line, then max 3 hashtags including #AroundUs. Max 500 characters each.
 
 TODAY: {today}
@@ -520,7 +515,7 @@ def draft(prompt, model):
             return out
     # second (and last) try: plain JSON, no tools
     code, js = claude_call({"model": model, "max_tokens": 12000, "messages": [{"role": "user", "content":
-                            prompt + "\nReply with ONE JSON object only, with keys world, india, south, andhra, local "
+                            prompt + "\nReply with ONE JSON object only, with keys world, india, south, andhra "
                             "(lists of {id, text, tag}) and captions. Escape quotes inside strings."}]})
     return parse_json(texts(js), "india") if code == 200 else {}
 
@@ -529,7 +524,7 @@ def draft(prompt, model):
 def build(result, items):
     by_id = {it["id"]: it for it in items}
     used_ids, used_text, posts, notes = set(), [], {}, []
-    order = ("local", "andhra", "south", "india", "world")  # most local first, so it keeps its stories
+    order = ("andhra", "south", "india", "world")  # most local first, so it keeps its stories
     for sec in order:
         lines = []
         for x in (result.get(sec) or []):
@@ -592,7 +587,6 @@ DEFAULT_CAPTIONS = {
     "india": "Today's top stories from across India, in simple words.\nఈరోజు దేశంలో ముఖ్య వార్తలు.\n#AroundUs #India",
     "south": "What's happening across South India today.\nదక్షిణ భారతంలో ఈరోజు.\n#AroundUs #SouthIndia",
     "andhra": "Andhra Pradesh today, in one quick read.\nఆంధ్రప్రదేశ్ ఈరోజు.\n#AroundUs #AndhraPradesh",
-    "local": "Around Giddalur today. Problem on your street? DM us, we never share who sent it.\nమన గిద్దలూరు చుట్టూ.\n#AroundUs #Giddalur",
     "rupee": "How many rupees for 1 dollar, euro, pound, yen, yuan, Canadian & Singapore dollar and dirham today.\nఈరోజు రూపాయి విలువ.\n#AroundUs #Rupee",
     "nifty": "Nifty 50 at close, with all 50 stocks ranked by their 1-day move. Also how each did over 1 week, 1 month and 1 year. For information only, not investment advice.\nనిఫ్టీ 50 ఈరోజు.\n#AroundUs #Nifty50 #StockMarket",
     "markets": "How the world's 10 biggest stock exchanges closed. For information only, not investment advice.\nమార్కెట్లు ఎలా ముగిశాయి.\n#AroundUs #Sensex",
@@ -728,9 +722,6 @@ def main():
         plan.append(("south", lambda p: slides.digest("SOUTH INDIA", "Across the South", "South", posts["south"], p)))
     if posts["andhra"]:
         plan.append(("andhra", lambda p: slides.digest("ANDHRA PRADESH", "Andhra today", "Andhra", posts["andhra"], p)))
-    if posts["local"]:
-        plan.append(("local", lambda p: slides.digest("NEAR YOU", "Around Giddalur", "Giddalur", posts["local"], p,
-                                                       note="Problem on your street? DM us. We never share who sent it.")))
     made = []
     for i, (name, fn) in enumerate(plan, 1):
         path = os.path.join(OUT_DIR, f"{i:02d}-{name}.jpg")
@@ -757,7 +748,16 @@ def main():
         if srcs:
             cap = cap.rstrip() + "\n\nSources: " + ", ".join(srcs[:8])
         queue[f"{day}/{os.path.basename(path)}"] = {"name": name, "caption": cap[:2200], "status": "waiting"}
-    with open(os.path.join(OUT_DIR, "queue.json"), "w") as fh:
+    qpath = os.path.join(OUT_DIR, "queue.json")
+    try:  # merge with today's existing queue (e.g. the 4 PM movers post, or posts already published)
+        with open(qpath) as fh:
+            old = json.load(fh)
+    except Exception:
+        old = {}
+    for k, v in old.items():
+        if k not in queue or v.get("status") in ("posted", "skipped"):
+            queue[k] = v
+    with open(qpath, "w") as fh:
         json.dump(queue, fh, ensure_ascii=False, indent=1)
     with open(os.path.join(OUT_DIR, "summary.txt"), "w") as fh:
         fh.write(summary)

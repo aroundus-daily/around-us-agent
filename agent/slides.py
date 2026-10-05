@@ -371,3 +371,86 @@ def nifty(data, path):
     df = f("iserif", 28)
     d.text((W - L - d.textlength(date, font=df), H - 58), date, font=df, fill=th["sub"])
     im.save(path, quality=93)
+
+
+def movers(data, path):
+    """End of day: top 10 gainers and top 10 losers of the Nifty 50, with price, change ₹ and change %."""
+    th = {"tag": (242, 194, 48), "bg": INK, "ink": PAPER, "sub": (165, 165, 160), "rule": (60, 63, 70)}
+    im = Image.new("RGB", (W, H), th["bg"])
+    noise = Image.effect_noise((W, H), 9).convert("L")
+    im = Image.blend(im, Image.merge("RGB", [noise] * 3), 0.04)
+    d = ImageDraw.Draw(im)
+    L = 48
+    x, y0 = L + 18, 58
+    for r in (19, 12, 6):
+        d.ellipse([x - r, y0 - r, x + r, y0 + r], outline=PAPER, width=2)
+    d.ellipse([x - 4, y0 - 4, x + 4, y0 + 4], fill=NEAR)
+    d.text((L + 48, 38), "around us", font=f("bri800", 32), fill=PAPER)
+    tag, tf = "MARKET CLOSE", f("int700", 21)
+    tw = d.textlength(tag, font=tf)
+    d.rounded_rectangle([W - L - tw - 40, 36, W - L, 80], radius=22, fill=th["tag"])
+    d.text((W - L - tw - 20, 45), tag, font=tf, fill=INK)
+
+    ix = data["index"]
+    when = datetime.strptime(ix["date"], "%Y-%m-%d").strftime("%a %d %b %Y").upper()
+    d.text((L - 2, 168), "Nifty 50 ", font=f("bri800", 64), fill=PAPER, anchor="ls")
+    d.text((L + d.textlength("Nifty 50 ", font=f("bri800", 64)), 168), "movers", font=f("iserif", 72),
+           fill=th["tag"], anchor="ls")
+    up = ix["d1"] >= 0
+    col = UP if up else DOWN
+    line = f"CLOSE {when}  ·  NIFTY {ix['close']:,.2f}"
+    lf = f("int700", 21)
+    d.text((L, 196), line, font=lf, fill=th["sub"])
+    chip = f"{abs(ix['close'] - ix['prev']):,.2f} ({abs(ix['d1']):.2f}%)"
+    cx = L + d.textlength(line, font=lf) + 18
+    cf = f("int700", 21)
+    cw = d.textlength(chip, font=cf) + 44
+    d.rounded_rectangle([cx, 192, cx + cw, 226], radius=9, fill=col)
+    arrow(d, cx + 12, 209, up, PAPER, 13)
+    d.text((cx + 32, 209), chip, font=cf, fill=PAPER, anchor="lm")
+
+    rows = data["rows"]
+    gainers = [r for r in rows if r["d1"] > 0][:10]
+    losers = [r for r in reversed(rows) if r["d1"] < 0][:10]
+    rh = 40
+    cols = (L + 8, L + 56, W - L - 330, W - L - 170, W - L - 8)  # rank, stock, price, chg ₹, chg %
+    rs = "₹" if has_glyph(f("int600", 18), "₹") else "Rs"
+
+    def block(title, items, top, colr, is_up):
+        d.text((L, top), title, font=f("int700", 24), fill=colr)
+        hy = top + 40
+        hf = f("int700", 16)
+        d.text((cols[1], hy), "STOCK", font=hf, fill=th["sub"])
+        d.text((cols[2], hy), f"PRICE {rs}", font=hf, fill=th["sub"], anchor="ra")
+        d.text((cols[3], hy), f"CHANGE {rs}", font=hf, fill=th["sub"], anchor="ra")
+        d.text((cols[4], hy), "CHANGE %", font=hf, fill=th["sub"], anchor="ra")
+        y = hy + 26
+        if not items:
+            d.text((cols[1], y + 14), "None today", font=f("int500", 22), fill=th["sub"])
+        for i, r in enumerate(items):
+            yy = y + i * rh
+            if i % 2 == 0:
+                d.rounded_rectangle([L, yy, W - L, yy + rh - 4], radius=8, fill=INK2)
+            cy = yy + (rh - 4) / 2
+            d.text((cols[0], cy), f"{i + 1}", font=f("int700", 19), fill=th["sub"], anchor="lm")
+            d.text((cols[1], cy), r["sym"], font=f("int700", 23), fill=PAPER, anchor="lm")
+            p = r["close"]
+            d.text((cols[2], cy), f"{p:,.2f}", font=f("int600", 22), fill=PAPER, anchor="rm")
+            diff = r["close"] - r["prev"]
+            d.text((cols[3], cy), f"{diff:+,.2f}", font=f("int600", 22), fill=colr, anchor="rm")
+            pct = f"{abs(r['d1']):.2f}%"
+            pf = f("int700", 23)
+            d.text((cols[4], cy), pct, font=pf, fill=colr, anchor="rm")
+            arrow(d, cols[4] - d.textlength(pct, font=pf) - 26, cy, is_up, colr, 14)
+        return y + max(len(items), 1) * rh
+
+    end = block("TOP 10 GAINERS", gainers, 246, UP, True)
+    block("TOP 10 LOSERS", losers, end + 16, DOWN, False)
+    d.text((L, H - 104), "Nifty 50 stocks, today's close vs previous close · Data: NSE via Yahoo Finance · Not investment advice",
+           font=f("int500", 17), fill=th["sub"])
+    d.line([(L, H - 72), (W - L, H - 72)], fill=th["rule"], width=1)
+    d.text((L, H - 54), HANDLE, font=f("int600", 24), fill=PAPER)
+    date = datetime.now(IST).strftime("%d %b %Y")
+    df = f("iserif", 28)
+    d.text((W - L - d.textlength(date, font=df), H - 58), date, font=df, fill=th["sub"])
+    im.save(path, quality=93)
