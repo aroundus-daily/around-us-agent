@@ -39,6 +39,25 @@ def f(name, size):
     return ImageFont.truetype(os.path.join(FONTS, f"{name}.ttf"), size)
 
 
+def has_glyph(font, ch):
+    """True if the font really contains ch (not the empty 'tofu' box)."""
+    try:
+        return font.getmask(ch).getbbox() != font.getmask("\uffff").getbbox()
+    except Exception:
+        return False
+
+
+def rupee_sign(font):
+    return "₹" if has_glyph(font, "₹") else "Rs "
+
+
+def date_label(iso):
+    try:
+        return datetime.strptime(iso[:10], "%Y-%m-%d").strftime("%-d %b")
+    except Exception:
+        return ""
+
+
 def wrap(d, text, ft, width):
     words, lines, cur = text.split(), [], ""
     for w in words:
@@ -112,7 +131,7 @@ def list_block(d, th, items, y0, y1, numbered=True):
         plan, h = [], 0
         for it in items:
             lines = wrap(d, it["text"], ft, width)[:3]
-            meta = " · ".join(x for x in (it.get("tag", ""), it.get("src", "")) if x).upper()
+            meta = " · ".join(x for x in (it.get("tag", ""), it.get("src", ""), date_label(it.get("date", ""))) if x).upper()
             mh = int(size * 0.78) if meta else 0
             plan.append((lines, meta, mh))
             h += mh + len(lines) * lh + gap
@@ -182,21 +201,33 @@ def rupee(rows, path, page=None, note=""):
     # header row
     cols = (M, W - M - 330, W - M)  # currency | rupees | change
     d.text((cols[0], y), "CURRENCY", font=f("int700", 20), fill=th["sub"])
-    d.text((cols[1], y), "₹ FOR 1", font=f("int700", 20), fill=th["sub"], anchor="ra")
+    hf = f("int700", 20)
+    d.text((cols[1], y), rupee_sign(hf).strip() + " FOR 1", font=hf, fill=th["sub"], anchor="ra")
     d.text((cols[2], y), "VS YESTERDAY", font=f("int700", 20), fill=th["sub"], anchor="ra")
     y += 40
     rh = min(104, (H - 230 - y) / max(len(rows), 1))
+    symbols = {"USD": "$", "EUR": "€", "GBP": "£", "JPY": "¥", "CNY": "CN¥", "CAD": "C$", "SGD": "S$", "AED": "AED"}
+    colours = {"USD": (47, 85, 212), "EUR": (20, 135, 115), "GBP": (128, 72, 160), "JPY": (217, 67, 59),
+               "CNY": (196, 54, 40), "CAD": (210, 60, 50), "SGD": (232, 119, 46), "AED": (34, 120, 80)}
     for i, r in enumerate(rows):
         yy = y + i * rh
         if i % 2 == 0:
             d.rounded_rectangle([M - 16, yy, W - M + 16, yy + rh - 6], radius=14, fill=(233, 229, 220))
         cy = yy + (rh - 6) / 2
-        d.text((cols[0], cy - 14), r["code"], font=f("int700", 34), fill=INK, anchor="lm")
-        d.text((cols[0], cy + 22), r["country"], font=f("int500", 22), fill=MUTE, anchor="lm")
+        # symbol badge
+        bx, br = cols[0] + 30, 30
+        d.ellipse([bx - br, cy - br, bx + br, cy + br], fill=colours.get(r["code"], INK))
+        sym = symbols.get(r["code"], r["code"][:1])
+        sf = f("int700", 30 if len(sym) == 1 else 20 if len(sym) == 2 else 15)
+        d.text((bx, cy + 1), sym, font=sf, fill=PAPER, anchor="mm")
+        tx = cols[0] + 78
+        d.text((tx, cy - 14), r["code"], font=f("int700", 34), fill=INK, anchor="lm")
+        d.text((tx, cy + 22), r["country"], font=f("int500", 22), fill=MUTE, anchor="lm")
         num = f"{r['inr']:.2f}"
         nf, rf = f("bri800", 44), f("int700", 34)
+        rs = rupee_sign(rf)
         d.text((cols[1], cy), num, font=nf, fill=INK, anchor="rm")
-        d.text((cols[1] - d.textlength(num, font=nf) - 4, cy + 2), "₹", font=rf, fill=INK, anchor="rm")
+        d.text((cols[1] - d.textlength(num, font=nf) - 4, cy + 2), rs, font=rf, fill=INK, anchor="rm")
         ch = r.get("change")
         if ch is None:
             d.text((cols[2], cy), "–", font=f("int600", 30), fill=MUTE, anchor="rm")
