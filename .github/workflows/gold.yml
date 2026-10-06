@@ -21,6 +21,9 @@ jobs:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
       IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+      IG_USER_ID: ${{ secrets.IG_USER_ID }}
+      # repo Settings → Secrets and variables → Actions → Variables: AUTO_PUBLISH = 0 to go back to manual taps
+      AUTO_PUBLISH: ${{ vars.AUTO_PUBLISH || '1' }}
       # the 1:17 PM run (or a manual run) reports even when today's rate is missing
       GOLD_FINAL_RUN: ${{ github.event.schedule != '47 4 * * *' && '1' || '0' }}
     steps:
@@ -38,5 +41,11 @@ jobs:
           git add -A posts/ data/
           git diff --cached --quiet || git commit -m "gold: $(date -u +%F)"
           for i in 1 2 3; do git pull --rebase --autostash && git push && break; sleep 5; done
-      - name: 3. Send it to Telegram with ✅ Post button
+      - name: 3. Publish to Instagram (AUTO_PUBLISH=1) or send ✅ Post buttons to Telegram
         run: python agent/send.py --gold
+      - name: 4. Save post status (Instagram links) to GitHub
+        if: always()
+        run: |
+          git add -A posts/ data/
+          git diff --cached --quiet || git commit -m "status: $(date -u +%FT%H%M)"
+          for i in 1 2 3; do git pull --rebase --autostash && git push && break; sleep 5; done

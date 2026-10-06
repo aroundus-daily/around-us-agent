@@ -2,7 +2,7 @@ name: Publish approved posts
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # checks your Telegram taps every ~5 minutes (GitHub may delay a little)
+    - cron: "23 */2 * * *"   # checks your Telegram taps every 2 hours (retries after a failed auto-post)
   workflow_dispatch:
 
 permissions:
