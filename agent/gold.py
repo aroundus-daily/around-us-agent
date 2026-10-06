@@ -96,14 +96,15 @@ def find_dates(text, today):
     return keep
 
 
-def windows(text, today, size=600):
+def windows(text, today, size=600, amount_re=None):
     """For every date, the text that follows it (up to the next date) with the amounts in it."""
+    amount_re = amount_re or AMOUNT_RE
     dates = find_dates(text, today)
     for i, (s, e, iso) in enumerate(dates):
         stop = dates[i + 1][0] if i + 1 < len(dates) else len(text)
         chunk = text[e:min(stop, e + size)]
         chunk = re.sub(r"\([^)]{0,24}\)", " ", chunk)       # drop "(+104)" / "(800 ▼)" change figures
-        amounts = [float(a.replace(",", "")) for a in AMOUNT_RE.findall(chunk)]
+        amounts = [float(a.replace(",", "")) for a in amount_re.findall(chunk)]
         yield iso, amounts
 
 
