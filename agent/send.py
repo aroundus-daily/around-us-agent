@@ -1,6 +1,10 @@
-"""Around Us - send today's posts to Telegram (runs AFTER the images are uploaded to GitHub).
+"""Around Us - publish or preview today's posts (runs AFTER the images are uploaded to GitHub).
 
-Checks each image is really online before sending its ✅ Post button.
+AUTO_PUBLISH=1 (default in the workflows): every new post is published to Instagram straight away,
+  and Telegram gets each image with its Instagram link. If a post fails, Telegram gets it with
+  ✅ Post / ❌ Skip buttons so you can retry with one tap.
+AUTO_PUBLISH=0: nothing is published; Telegram gets each image with ✅ Post / ❌ Skip buttons.
+Either way, each image is checked to be really online first (Instagram fetches it from GitHub).
 """
 import json
 import os
@@ -11,7 +15,9 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import daily  # noqa: E402  (re-uses its Telegram helpers and settings)
+import approve  # noqa: E402  (Instagram publishing)
 
+AUTO = os.environ.get("AUTO_PUBLISH", "1").strip() != "0"
 REPO = os.environ.get("GITHUB_REPOSITORY", "aroundus-daily/around-us-agent")
 BRANCH = os.environ.get("GITHUB_REF_NAME", "main")
 
@@ -63,6 +69,8 @@ def send_day(day, check_online=True, only=None):
             continue
         if only is None and item.get("name") in EOD_NAMES:
             continue
+        if item.get("status") in ("posted", "skipped"):
+            continue   # never re-send (or re-post) something already handled
         path = os.path.join(daily.POSTS_DIR, key)
         files = [f"{day}/{f}" for f in item.get("files", [])] or [key]
         if check_online and not all(online(k) for k in files):
@@ -71,14 +79,31 @@ def send_day(day, check_online=True, only=None):
             continue
         buttons = [{"text": "✅ Post", "callback_data": f"post|{key}"[:64]},
                    {"text": "❌ Skip", "callback_data": f"skip|{key}"[:64]}]
+        caption = item["caption"]
+        if AUTO and item.get("status") == "waiting":
+            ok, info = approve.publish(files, caption)
+            if ok:
+                item["status"], item["permalink"] = "posted", info
+                item["posted_at"] = datetime.now(daily.IST).isoformat()
+                buttons = None
+                caption = f"✅ Live on Instagram: {info}\n\n" + caption
+                daily.log(f"auto-posted {key}: {info}")
+            else:
+                item["error"] = info
+                caption = f"⚠️ Auto-post failed: {info}\nTap ✅ Post to retry.\n\n" + caption
+                daily.log(f"auto-post failed {key}: {info}")
+            with open(os.path.join(folder, "queue.json"), "w") as fh:
+                json.dump(queue, fh, ensure_ascii=False, indent=1)
+            time.sleep(10)   # a short pause between posts
         if len(files) > 1:
-            code, js = tg_album([os.path.join(daily.POSTS_DIR, k) for k in files], item["caption"])
-            if code == 200:
+            code, js = tg_album([os.path.join(daily.POSTS_DIR, k) for k in files], caption)
+            if code == 200 and buttons:
                 code, js = daily.tg("sendMessage", chat_id=daily.TG_CHAT,
-                                    text=f"👆 {item['name']}: {len(files)} slides, posted together as ONE Instagram post.",
+                                    text=f"👆 {item['name']}: {len(files)} slides, NOT posted yet. "
+                                         "Tap ✅ Post to publish them together as one Instagram post.",
                                     reply_markup={"inline_keyboard": [buttons]})
         else:
-            code, js = daily.tg_photo(path, item["caption"], buttons)
+            code, js = daily.tg_photo(path, caption, buttons)
         if code != 200:
             daily.log(f"telegram {key} failed: {str(js)[:150]}")
         else:
