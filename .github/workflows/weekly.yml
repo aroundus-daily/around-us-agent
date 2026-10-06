@@ -1,0 +1,49 @@
+name: Weekly markets reel
+
+on:
+  schedule:
+    - cron: "47 2 * * 6"   # 8:17 AM IST every Saturday
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: weekly
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
+      IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+      IG_USER_ID: ${{ secrets.IG_USER_ID }}
+      AUTO_PUBLISH: ${{ vars.AUTO_PUBLISH || '1' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: ffmpeg (preinstalled on GitHub runners; installed here if missing)
+        run: which ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
+      - name: 1. Make the weekly reel (Nifty week, top 10 gainers/losers, rupee)
+        run: python agent/weekly.py
+      - name: 2. Upload the video to GitHub
+        run: |
+          git config user.name "around-us-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add -A posts/ data/
+          git diff --cached --quiet || git commit -m "weekly reel: $(date -u +%F)"
+          for i in 1 2 3; do git pull --rebase --autostash && git push && break; sleep 5; done
+      - name: 3. Publish the reel to Instagram (AUTO_PUBLISH=1) or send it to Telegram with ✅ Post
+        run: python agent/send.py --weekly
+      - name: 4. Save post status (Instagram link) to GitHub
+        if: always()
+        run: |
+          git add -A posts/ data/
+          git diff --cached --quiet || git commit -m "status: $(date -u +%FT%H%M)"
+          for i in 1 2 3; do git pull --rebase --autostash && git push && break; sleep 5; done
