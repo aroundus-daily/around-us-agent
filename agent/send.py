@@ -36,7 +36,7 @@ def online(key, tries=12):
     return False
 
 
-EOD_NAMES = ("rupee", "nifty", "movers", "gold", "silver")  # sent by their own later runs, not the morning one
+EOD_NAMES = ("rupee", "nifty", "movers", "gold", "silver", "weekly")  # sent by their own later runs, not the morning one
 
 
 def tg_album(paths, caption):
@@ -56,6 +56,23 @@ def tg_album(paths, caption):
                       {"Content-Type": f"multipart/form-data; boundary={boundary}"}, body, timeout=90)
 
 
+def tg_video(path, caption, buttons=None):
+    """Telegram preview of a reel (sendVideo, multipart)."""
+    boundary = "----AroundUsVideo" + str(int(time.time()))
+    with open(path, "rb") as fh:
+        vid = fh.read()
+    parts = f'--{boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n{daily.TG_CHAT}\r\n'
+    parts += f'--{boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n{caption[:1024]}\r\n'
+    parts += f'--{boundary}\r\nContent-Disposition: form-data; name="supports_streaming"\r\n\r\ntrue\r\n'
+    if buttons:
+        parts += (f'--{boundary}\r\nContent-Disposition: form-data; name="reply_markup"\r\n\r\n'
+                  f'{json.dumps({"inline_keyboard": [buttons]})}\r\n')
+    body = (parts + f'--{boundary}\r\nContent-Disposition: form-data; name="video"; filename="reel.mp4"\r\n'
+            "Content-Type: video/mp4\r\n\r\n").encode() + vid + f"\r\n--{boundary}--\r\n".encode()
+    return daily.http("POST", f"https://api.telegram.org/bot{daily.TG_TOKEN}/sendVideo",
+                      {"Content-Type": f"multipart/form-data; boundary={boundary}"}, body, timeout=120)
+
+
 def send_day(day, check_online=True, only=None):
     folder = os.path.join(daily.POSTS_DIR, day)
     with open(os.path.join(folder, "queue.json")) as fh:
@@ -73,7 +90,9 @@ def send_day(day, check_online=True, only=None):
             continue   # never re-send (or re-post) something already handled
         path = os.path.join(daily.POSTS_DIR, key)
         files = [f"{day}/{f}" for f in item.get("files", [])] or [key]
-        if check_online and not all(online(k) for k in files):
+        kind = item.get("kind", "image")
+        cover = f"{day}/{item['cover']}" if item.get("cover") else None
+        if check_online and not all(online(k) for k in files + ([cover] if cover else [])):
             daily.tg("sendMessage", chat_id=daily.TG_CHAT,
                      text=f"⚠️ {item['name']}: image did not appear online, so no ✅ button. Re-run its workflow in GitHub Actions.")
             continue
@@ -81,7 +100,7 @@ def send_day(day, check_online=True, only=None):
                    {"text": "❌ Skip", "callback_data": f"skip|{key}"[:64]}]
         caption = item["caption"]
         if AUTO and item.get("status") == "waiting":
-            ok, info = approve.publish(files, caption)
+            ok, info = approve.publish(files, caption, kind=kind, cover=cover)
             if ok:
                 item["status"], item["permalink"] = "posted", info
                 item["posted_at"] = datetime.now(daily.IST).isoformat()
@@ -95,7 +114,9 @@ def send_day(day, check_online=True, only=None):
             with open(os.path.join(folder, "queue.json"), "w") as fh:
                 json.dump(queue, fh, ensure_ascii=False, indent=1)
             time.sleep(10)   # a short pause between posts
-        if len(files) > 1:
+        if kind == "reel":
+            code, js = tg_video(path, caption, buttons)
+        elif len(files) > 1:
             code, js = tg_album([os.path.join(daily.POSTS_DIR, k) for k in files], caption)
             if code == 200 and buttons:
                 code, js = daily.tg("sendMessage", chat_id=daily.TG_CHAT,
@@ -112,7 +133,7 @@ def send_day(day, check_online=True, only=None):
 
 if __name__ == "__main__":
     day = datetime.now(daily.IST).strftime("%Y-%m-%d")
-    if len(sys.argv) > 1 and sys.argv[1] in ("--eod", "--gold", "--silver"):
+    if len(sys.argv) > 1 and sys.argv[1] in ("--eod", "--gold", "--silver", "--weekly"):
         prefix = sys.argv[1][2:]
         folder = os.path.join(daily.POSTS_DIR, day)
         marker = os.path.join(folder, f"{prefix}_pending.txt")

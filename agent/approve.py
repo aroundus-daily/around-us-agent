@@ -80,21 +80,28 @@ def _wait(cid, tries=24):
         if status == "FINISHED":
             return True, ""
         if status == "ERROR":
-            return False, "Instagram could not process the image"
+            return False, "Instagram could not process the media"
         time.sleep(5)
-    return False, "Instagram took too long to process the image"
+    return False, "Instagram took too long to process the media"
 
 
-def publish(keys, caption):
-    """Instagram API: one image, or a carousel when several keys are given.
+def publish(keys, caption, kind="image", cover=None):
+    """Instagram API: one image, a carousel (several keys), or a Reel (kind="reel", one .mp4 key).
     create container(s) -> wait until ready -> publish. Returns (ok, permalink or error)."""
     if isinstance(keys, str):
         keys = [keys]
     last = ""
-    for which in (0, 1):                 # raw GitHub first, then jsDelivr
+    for which in ((1, 0) if kind == "reel" else (0, 1)):   # videos: jsDelivr first (serves video/mp4), then raw
         urls = [image_urls(k)[which] for k in keys]
-        if len(urls) == 1:
+        if kind == "reel":
+            params = {"media_type": "REELS", "video_url": urls[0], "caption": caption, "share_to_feed": "true"}
+            if cover:
+                params["cover_url"] = image_urls(cover)[0]
+            cid, last = _create(params)
+            tries = 90                                     # video processing can take a few minutes
+        elif len(urls) == 1:
             cid, last = _create({"image_url": urls[0], "caption": caption})
+            tries = 24
         else:
             children = []
             for u in urls:
@@ -107,12 +114,13 @@ def publish(keys, caption):
                     break
                 children.append(child)
             cid = None
+            tries = 24
             if len(children) == len(urls):
                 cid, last = _create({"media_type": "CAROUSEL", "children": ",".join(children), "caption": caption})
         if not cid:
             log(last, "| via", "raw" if which == 0 else "jsdelivr")
             continue
-        ok, err = _wait(cid)
+        ok, err = _wait(cid, tries=tries)
         if not ok:
             last = err
             continue
@@ -201,12 +209,13 @@ def main():
                reply_markup={"inline_keyboard": [[{"text": "❌ Skipped", "callback_data": "noop|"}]]})
         elif action == "post":
             keys = post_keys(key, item)
-            if not all(image_is_online(k) for k in keys):
+            if not all(image_is_online(k) for k in keys + ([f"{day}/{item['cover']}"] if item.get("cover") else [])):
                 tg("answerCallbackQuery", callback_query_id=cb["id"],
                    text="Image still uploading. Tap ✅ again in 2 minutes.", show_alert=True)
                 continue
             tg("answerCallbackQuery", callback_query_id=cb["id"], text="Posting to Instagram…")
-            ok, info = publish(keys, item["caption"])
+            cover = f"{day}/{item['cover']}" if item.get("cover") else None
+            ok, info = publish(keys, item["caption"], kind=item.get("kind", "image"), cover=cover)
             if ok:
                 item["status"], item["permalink"] = "posted", info
                 item["posted_at"] = datetime.now(IST).isoformat()
