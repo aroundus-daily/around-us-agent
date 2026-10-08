@@ -930,3 +930,270 @@ def silver_state(card, path, inr, hint=None):
            + " · Excludes 3% GST & making charges")
     footer(d, th, note=src)
     im.save(path, quality=93)
+
+
+PLATFORM_COLOURS = {
+    "Netflix": (229, 9, 20), "Prime Video": (0, 150, 210), "JioHotstar": (20, 90, 210), "ZEE5": (120, 60, 200),
+    "SonyLIV": (190, 140, 30), "Aha": (255, 100, 30), "Sun NXT": (240, 130, 0), "ETV Win": (60, 140, 220),
+    "Apple TV+": (110, 110, 115), "Lionsgate Play": (200, 60, 60), "MX Player": (40, 120, 220),
+    "Theatres": (200, 40, 90),
+}
+
+
+def star(d, cx, cy, r, fill):
+    import math
+    pts = []
+    for i in range(10):
+        ang = -math.pi / 2 + i * math.pi / 5
+        rr = r if i % 2 == 0 else r * 0.45
+        pts.append((cx + rr * math.cos(ang), cy + rr * math.sin(ang)))
+    d.polygon(pts, fill=fill)
+
+
+def releases(sections, subtitle, path, hint=None, page=None):
+    """Friday releases slide. sections = [(heading, rows)]; each row: title, type, language, platform, date,
+    note, genres, runtime, rating, rating_src. Rows grow taller when there are few of them."""
+    th = {"tag": (242, 150, 60), "bg": (22, 19, 28), "ink": PAPER, "sub": (160, 152, 170), "rule": (66, 58, 76)}
+    acc, ink, sub = th["tag"], th["ink"], th["sub"]
+    card, card2 = (36, 31, 44), (30, 26, 37)
+    im = Image.new("RGB", (W, H), th["bg"])
+    noise = Image.effect_noise((W, H), 9).convert("L")
+    im = Image.blend(im, Image.merge("RGB", [noise] * 3), 0.04)
+    d = ImageDraw.Draw(im)
+    x, y0 = M + 20, 86
+    for r in (21, 14, 7):
+        d.ellipse([x - r, y0 - r, x + r, y0 + r], outline=ink, width=2)
+    d.ellipse([x - 5, y0 - 5, x + 5, y0 + 5], fill=NEAR)
+    d.text((M + 54, 64), "around us", font=f("bri800", 36), fill=ink)
+    tag, tf = "RELEASES", f("int700", 23)
+    tw = d.textlength(tag, font=tf)
+    d.rounded_rectangle([W - M - tw - 44, 62, W - M, 110], radius=24, fill=acc)
+    d.text((W - M - tw - 22, 72), tag, font=tf, fill=INK)
+    d.text((M, 132), ("THIS WEEK · " + subtitle).upper(), font=f("int700", 22), fill=acc)
+    big, ser = f("bri800", 84), f("iserif", 94)
+    d.text((M - 3, 248), "New ", font=big, fill=ink, anchor="ls")
+    d.text((M + d.textlength("New ", font=big), 248), "releases", font=ser, fill=acc, anchor="ls")
+    d.text((M, 272), "Telugu · Tamil · Hindi films and series · cinemas and OTT", font=f("int500", 24), fill=sub)
+    y = 324
+    nrows = sum(len(r) for _, r in sections)
+    nsec = len(sections)
+    avail = H - 166 - y
+    rh = min(150, avail / max(nrows + 0.55 * nsec, 1))
+    hh = rh * 0.55
+    tall = rh >= 128
+    tfnt, mf, nf = f("int700", 34 if tall else 31), f("int500", 22 if tall else 20), f("int500", 20)
+    for heading, rows in sections:
+        d.text((M, y + hh / 2), heading.upper(), font=f("int700", 22), fill=acc, anchor="lm")
+        d.line([(M + d.textlength(heading.upper(), font=f("int700", 22)) + 16, y + hh / 2), (W - M, y + hh / 2)],
+               fill=th["rule"], width=1)
+        y += hh
+        for i, r in enumerate(rows):
+            yy = y + i * rh
+            d.rounded_rectangle([M, yy, W - M, yy + rh - 10], radius=16, fill=card if i % 2 == 0 else card2)
+            cy = yy + (rh - 10) / 2
+            pc = PLATFORM_COLOURS.get(r["platform"], (90, 90, 100))
+            pf = f("int700", 17)
+            plabel = r["platform"].upper()
+            pw = d.textlength(plabel, font=pf) + 24
+            d.rounded_rectangle([M + 16, cy - 32, M + 16 + pw, cy - 4], radius=8, fill=pc)
+            d.text((M + 16 + pw / 2, cy - 18), plabel, font=pf, fill=PAPER, anchor="mm")
+            dt = datetime.strptime(r["date"], "%Y-%m-%d")
+            d.text((M + 16, cy + 18), dt.strftime("%a %-d %b").upper(), font=f("int600", 18), fill=sub, anchor="lm")
+            tx = M + 196
+            title = r["title"]
+            while d.textlength(title, font=tfnt) > 560 and len(title) > 8:
+                title = title[:-2].rstrip() + "…"
+            meta = [r["language"], "Series" if r["type"] == "series" else "Film"] + (r.get("genres") or [])
+            if r.get("runtime") and r["type"] != "series":
+                meta.append(f"{r['runtime']} min")
+            mline = " · ".join(m for m in meta if m)
+            while d.textlength(mline, font=mf) > 560 and len(mline) > 10:
+                mline = mline[:-2].rstrip() + "…"
+            note = (r.get("note") or "").strip()
+            if tall and note:
+                d.text((tx, cy - 36), title, font=tfnt, fill=ink, anchor="lm")
+                d.text((tx, cy + 2), mline, font=mf, fill=sub, anchor="lm")
+                while d.textlength(note, font=nf) > 560 and len(note) > 10:
+                    note = note[:-2].rstrip() + "…"
+                d.text((tx, cy + 34), note[:1].upper() + note[1:], font=nf, fill=(190, 182, 200), anchor="lm")
+            else:
+                d.text((tx, cy - 16), title, font=tfnt, fill=ink, anchor="lm")
+                d.text((tx, cy + 20), mline, font=mf, fill=sub, anchor="lm")
+            if r.get("rating"):
+                bx1, bx0 = W - M - 16, W - M - 16 - 150
+                d.rounded_rectangle([bx0, cy - 26, bx1, cy + 26], radius=12, fill=(50, 44, 60))
+                star(d, bx0 + 28, cy, 15, acc)
+                d.text((bx1 - 14, cy - 8), f"{r['rating']:.1f}", font=f("bri800", 30), fill=ink, anchor="rm")
+                d.text((bx1 - 14, cy + 17), r.get("rating_src", ""), font=f("int600", 14), fill=sub, anchor="rm")
+            else:
+                d.rounded_rectangle([W - M - 16 - 90, cy - 20, W - M - 16, cy + 20], radius=10, outline=acc, width=2)
+                d.text((W - M - 16 - 45, cy), "NEW", font=f("int700", 20), fill=acc, anchor="mm")
+        y += len(rows) * rh + 8
+    if hint:
+        text, way = hint
+        hf2 = f("int700", 21)
+        hy2 = H - 140
+        d.text((W - M - 34, hy2), text, font=hf2, fill=acc, anchor="rm")
+        d.line([(W - M - 24, hy2), (W - M - 2, hy2)], fill=acc, width=3)
+        d.polygon([(W - M, hy2), (W - M - 10, hy2 - 7), (W - M - 10, hy2 + 7)], fill=acc)
+    if page:
+        d.text((M, H - 140), f"{page[0]} / {page[1]}", font=f("int600", 20), fill=sub, anchor="lm")
+    footer(d, th, note="Checked against this week's release round-ups and TMDB · Ratings at posting · Dates as announced")
+    im.save(path, quality=93)
+
+
+def _dark_header(d, tag, L=48):
+    th = {"tag": (242, 194, 48), "bg": INK, "ink": PAPER, "sub": (165, 165, 160), "rule": (60, 63, 70)}
+    x, y0 = L + 18, 58
+    for r in (19, 12, 6):
+        d.ellipse([x - r, y0 - r, x + r, y0 + r], outline=PAPER, width=2)
+    d.ellipse([x - 4, y0 - 4, x + 4, y0 + 4], fill=NEAR)
+    d.text((L + 48, 38), "around us", font=f("bri800", 32), fill=PAPER)
+    tf = f("int700", 21)
+    tw = d.textlength(tag, font=tf)
+    d.rounded_rectangle([W - L - tw - 40, 36, W - L, 80], radius=22, fill=th["tag"])
+    d.text((W - L - tw - 20, 45), tag, font=tf, fill=INK)
+    return th
+
+
+def _dark_footer(d, th, note, L=48):
+    d.text((L, H - 104), note, font=f("int500", 17), fill=th["sub"])
+    d.line([(L, H - 72), (W - L, H - 72)], fill=th["rule"], width=1)
+    d.text((L, H - 54), HANDLE, font=f("int600", 24), fill=PAPER)
+    date = datetime.now(IST).strftime("%d %b %Y")
+    df = f("iserif", 28)
+    d.text((W - L - d.textlength(date, font=df), H - 58), date, font=df, fill=th["sub"])
+
+
+def nifty_sessions(data, path):
+    """Nifty 50: today's close + previous 14 sessions. Bar chart of daily % moves, then the table."""
+    im = Image.new("RGB", (W, H), INK)
+    noise = Image.effect_noise((W, H), 9).convert("L")
+    im = Image.blend(im, Image.merge("RGB", [noise] * 3), 0.04)
+    d = ImageDraw.Draw(im)
+    L = 48
+    th = _dark_header(d, "NIFTY 50", L)
+    rows = data["rows"]
+    today = rows[-1]
+    when = datetime.strptime(today["date"], "%Y-%m-%d").strftime("%a %d %b %Y").upper()
+    d.text((L, 104), f"NIFTY 50 · CLOSE ON {when} · LAST 15 SESSIONS", font=f("int700", 20), fill=th["sub"])
+    vf = f("bri800", 82)
+    val = f"{today['close']:,.2f}"
+    d.text((L - 3, 206), val, font=vf, fill=PAPER, anchor="ls")
+    up = today["pts"] >= 0
+    col = UP if up else DOWN
+    chip = f"{abs(today['pts']):,.2f}  ({abs(today['pct']):.2f}%) today"
+    cx = L + d.textlength(val, font=vf) + 26
+    cf = f("int700", 26)
+    cw = d.textlength(chip, font=cf) + 56
+    d.rounded_rectangle([cx, 156, cx + cw, 204], radius=12, fill=col)
+    arrow(d, cx + 14, 180, up, PAPER, 17)
+    d.text((cx + 40, 180), chip, font=cf, fill=PAPER, anchor="lm")
+    # 15-session summary line
+    first_prev = data["first_prev"][1]
+    tot = today["close"] - first_prev
+    tp = tot / first_prev * 100
+    hi = max(rows, key=lambda r: r["close"])
+    lo = min(rows, key=lambda r: r["close"])
+    tcol = UP if tot >= 0 else DOWN
+    d.text((L, 232), f"15 sessions: {'+' if tot >= 0 else '−'}{abs(tot):,.2f} pts ({abs(tp):.2f}%)   ·   "
+                     f"high {hi['close']:,.2f} ({date_label(hi['date'])})   ·   low {lo['close']:,.2f} ({date_label(lo['date'])})",
+           font=f("int600", 21), fill=th["sub"])
+    # bar chart of daily % change
+    top, bot = 300, 520
+    d.rounded_rectangle([L, 276, W - L, 560], radius=14, fill=INK2)
+    d.text((L + 18, 288), "DAILY CHANGE %", font=f("int700", 17), fill=th["sub"])
+    n = len(rows)
+    gap = 10
+    bw = (W - 2 * L - 36 - gap * (n - 1)) / n
+    mx = max(abs(r["pct"]) for r in rows) or 1
+    zero = (top + bot) / 2
+    d.line([(L + 18, zero), (W - L - 18, zero)], fill=th["rule"], width=1)
+    for i, r in enumerate(rows):
+        x0 = L + 18 + i * (bw + gap)
+        h = (bot - top) / 2 * abs(r["pct"]) / mx
+        c = UP if r["pct"] >= 0 else DOWN
+        if r["pct"] >= 0:
+            d.rounded_rectangle([x0, zero - h, x0 + bw, zero], radius=4, fill=c)
+            d.text((x0 + bw / 2, zero - h - 12), f"{r['pct']:+.1f}", font=f("int600", 14), fill=c, anchor="mm")
+        else:
+            d.rounded_rectangle([x0, zero, x0 + bw, zero + h], radius=4, fill=c)
+            d.text((x0 + bw / 2, zero + h + 12), f"{r['pct']:+.1f}", font=f("int600", 14), fill=c, anchor="mm")
+        lab = datetime.strptime(r["date"], "%Y-%m-%d").strftime("%d")
+        d.text((x0 + bw / 2, 540), lab, font=f("int500", 14), fill=th["sub"], anchor="mm")
+    # table, newest first
+    y = 586
+    hf = f("int700", 16)
+    cols = (L + 12, L + 430, L + 660, W - L - 12)
+    d.text((cols[0], y), "SESSION", font=hf, fill=th["sub"])
+    for lab, x in zip(("CLOSE", "CHANGE PTS", "CHANGE %"), cols[1:]):
+        d.text((x, y), lab, font=hf, fill=th["sub"], anchor="ra")
+    y += 28
+    rh = (H - 118 - y) / n
+    for i, r in enumerate(reversed(rows)):
+        yy = y + i * rh
+        if i == 0:
+            d.rounded_rectangle([L, yy, W - L, yy + rh - 3], radius=8, fill=(64, 58, 32))
+        elif i % 2 == 0:
+            d.rounded_rectangle([L, yy, W - L, yy + rh - 3], radius=8, fill=INK2)
+        cy = yy + (rh - 3) / 2
+        dt = datetime.strptime(r["date"], "%Y-%m-%d")
+        lab = ("Today, " if i == 0 else dt.strftime("%a ")) + dt.strftime("%d %b")
+        d.text((cols[0], cy), lab, font=f("int700" if i == 0 else "int500", 21),
+               fill=th["tag"] if i == 0 else PAPER, anchor="lm")
+        d.text((cols[1], cy), f"{r['close']:,.2f}", font=f("int700" if i == 0 else "int600", 22), fill=PAPER, anchor="rm")
+        c = UP if r["pts"] >= 0 else DOWN
+        d.text((cols[2], cy), f"{r['pts']:+,.2f}", font=f("int600", 21), fill=c, anchor="rm")
+        t = f"{abs(r['pct']):.2f}%"
+        pf = f("int700", 21)
+        d.text((cols[3], cy), t, font=pf, fill=c, anchor="rm")
+        arrow(d, cols[3] - d.textlength(t, font=pf) - 24, cy, r["pts"] >= 0, c, 12)
+    _dark_footer(d, th, "Close vs previous close · Data: NSE via Yahoo Finance · For information only, not investment advice", L)
+    im.save(path, quality=93)
+
+
+def indices(rows, path):
+    """Every major Nifty index at the close: value, 1D points, 1D %, 1W / 1M / 1Y %. Sorted by 1D %."""
+    im = Image.new("RGB", (W, H), INK)
+    noise = Image.effect_noise((W, H), 9).convert("L")
+    im = Image.blend(im, Image.merge("RGB", [noise] * 3), 0.04)
+    d = ImageDraw.Draw(im)
+    L = 40
+    th = _dark_header(d, "NIFTY INDICES", L)
+    n50 = next((r for r in rows if r["name"] == "Nifty 50"), rows[0])
+    when = datetime.strptime(n50["date"], "%Y-%m-%d").strftime("%a %d %b %Y").upper()
+    d.text((L, 104), f"ALL MAJOR NIFTY INDICES · CLOSE ON {when}", font=f("int700", 20), fill=th["sub"])
+    d.text((L - 2, 190), "Nifty indices ", font=f("bri800", 58), fill=PAPER, anchor="ls")
+    d.text((L + d.textlength("Nifty indices ", font=f("bri800", 58)), 190), "at the close", font=f("iserif", 64),
+           fill=th["tag"], anchor="ls")
+    ups = sum(1 for r in rows if r["d1"] > 0 and "VIX" not in r["name"])
+    downs = sum(1 for r in rows if r["d1"] < 0 and "VIX" not in r["name"])
+    d.text((L, 214), f"{ups} indices up · {downs} down · sorted by today's % change", font=f("int500", 21), fill=th["sub"])
+    y = 262
+    hf = f("int700", 15)
+    cols = (L + 10, L + 470, L + 600, L + 700, L + 800, L + 900, W - L - 8)   # name, close, pts, 1D, 1W, 1M, 1Y
+    d.text((cols[0], y), "INDEX", font=hf, fill=th["sub"])
+    for lab, x in zip(("CLOSE", "PTS", "1D", "1W", "1M", "1Y"), cols[1:]):
+        d.text((x, y), lab, font=hf, fill=th["sub"], anchor="ra")
+    y += 26
+    rh = min(34, (H - 116 - y) / max(len(rows), 1))
+    nf = f("int600", 17)
+    for i, r in enumerate(rows):
+        yy = y + i * rh
+        if i % 2 == 0:
+            d.rounded_rectangle([L, yy, W - L, yy + rh - 3], radius=6, fill=INK2)
+        cy = yy + (rh - 3) / 2
+        bold = r["name"] == "Nifty 50"
+        d.text((cols[0], cy), r["name"], font=f("int700" if bold else "int600", 19), fill=th["tag"] if bold else PAPER, anchor="lm")
+        c = r["close"]
+        d.text((cols[1], cy), f"{c:,.2f}" if c < 10000 else f"{c:,.0f}", font=f("int600", 18), fill=PAPER, anchor="rm")
+        pts = r["close"] - r["prev"]
+        col = UP if r["d1"] >= 0 else DOWN
+        d.text((cols[2], cy), f"{pts:+,.0f}" if abs(pts) >= 100 else f"{pts:+,.1f}", font=nf, fill=col, anchor="rm")
+        d.text((cols[3], cy), f"{r['d1']:+.2f}%", font=f("int700", 17), fill=col, anchor="rm")
+        for key, x in zip(("w1", "m1", "y1"), cols[4:]):
+            v = r.get(key)
+            txt = "–" if v is None else (f"{v:+.0f}%" if abs(v) >= 99.95 else f"{v:+.1f}%")
+            d.text((x, cy), txt, font=nf, fill=th["sub"] if v is None else (UP if v >= 0 else DOWN), anchor="rm")
+    _dark_footer(d, th, "Index value at close · PTS = change in points today · Data: NSE via Yahoo Finance · Not investment advice", L)
+    im.save(path, quality=93)

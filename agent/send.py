@@ -36,7 +36,7 @@ def online(key, tries=12):
     return False
 
 
-EOD_NAMES = ("rupee", "nifty", "movers", "gold", "silver", "weekly")  # sent by their own later runs, not the morning one
+EOD_NAMES = ("rupee", "nifty", "movers", "gold", "silver", "weekly", "releases")  # sent by their own later runs, not the morning one
 
 
 def tg_album(paths, caption):
@@ -133,7 +133,7 @@ def send_day(day, check_online=True, only=None):
 
 if __name__ == "__main__":
     day = datetime.now(daily.IST).strftime("%Y-%m-%d")
-    if len(sys.argv) > 1 and sys.argv[1] in ("--eod", "--gold", "--silver", "--weekly"):
+    if len(sys.argv) > 1 and sys.argv[1] in ("--eod", "--gold", "--silver", "--weekly", "--ott"):
         prefix = sys.argv[1][2:]
         folder = os.path.join(daily.POSTS_DIR, day)
         marker = os.path.join(folder, f"{prefix}_pending.txt")
