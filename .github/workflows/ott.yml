@@ -1,0 +1,50 @@
+name: Friday releases
+
+on:
+  schedule:
+    - cron: "47 3 * * 5"   # 9:17 AM IST every Friday
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ott
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}      # free: themoviedb.org → Settings → API (v3 key)
+      OMDB_API_KEY: ${{ secrets.OMDB_API_KEY }}      # optional, for IMDb ratings: omdbapi.com/apikey.aspx
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
+      IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+      IG_USER_ID: ${{ secrets.IG_USER_ID }}
+      AUTO_PUBLISH: ${{ vars.AUTO_PUBLISH || '1' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: 1. Collect and verify this week's releases (1 Claude call)
+        run: python agent/ott.py
+      - name: 2. Upload images to GitHub
+        run: |
+          git config user.name "around-us-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add -A posts/ data/
+          git diff --cached --quiet || git commit -m "releases: $(date -u +%F)"
+          for i in 1 2 3; do git pull --rebase --autostash && git push && break; sleep 5; done
+      - name: 3. Publish to Instagram (AUTO_PUBLISH=1) or send ✅ Post buttons to Telegram
+        run: python agent/send.py --ott
+      - name: 4. Save post status (Instagram link) to GitHub
+        if: always()
+        run: |
+          git add -A posts/ data/
+          git diff --cached --quiet || git commit -m "status: $(date -u +%FT%H%M)"
+          for i in 1 2 3; do git pull --rebase --autostash && git push && break; sleep 5; done
