@@ -1,0 +1,22 @@
+{
+ "2026-10-11/01-world.jpg": {
+  "name": "world",
+  "caption": "India's name came up in big talks around the world today.\nFrom trade deals to science pacts, here is what it means for us.\nఈ రోజు ప్రపంచంలో భారత్ వార్తలు ఇవే.\n#AroundUs #India #World\n\nSources: DD News, NDTV, News On AIR, TV BRICS, The Indian Express, The Times of India",
+  "status": "waiting"
+ },
+ "2026-10-11/02-india.jpg": {
+  "name": "india",
+  "caption": "Movies, markets, cricket and more from across the country.\nHere is a quick read of today's top national news.\nదేశవ్యాప్తంగా ఈ రోజు ముఖ్యమైన వార్తలు ఇవే.\n#AroundUs #IndiaNews\n\nSources: BikeAdvice, Cricinfo, Equitymaster, Financial Times, Hindustan Times, Moneycontrol.com, NDTV",
+  "status": "waiting"
+ },
+ "2026-10-11/03-south.jpg": {
+  "name": "south",
+  "caption": "Quick news from Tamil Nadu, Karnataka, Kerala and Telangana.\nFrom big projects to football and investments, read on.\nదక్షిణ భారత రాష్ట్రాల ముఖ్య వార్తలు ఇవే.\n#AroundUs #SouthIndia\n\nSources: Deccan Herald, ESPN India, Hindustan Times, The Hindu, WION",
+  "status": "waiting"
+ },
+ "2026-10-11/04-andhra.jpg": {
+  "name": "andhra",
+  "caption": "Today's updates from Andhra Pradesh, in simple words.\nLocal polls, power, investments and more.\nఆంధ్రప్రదేశ్ ముఖ్య వార్తలు ఇవే.\n#AroundUs #AndhraPradesh #Giddalur\n\nSources: BW Businessworld, ET Manufacturing, The Hindu, The New Indian Express, The Times of India",
+  "status": "waiting"
+ }
+}
