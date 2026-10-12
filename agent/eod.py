@@ -32,7 +32,7 @@ CAPTION_INDICES = ("How every major Nifty index closed today: value, change in p
 # NSE indices on Yahoo Finance: name -> symbols to try, in order (Yahoo's naming is inconsistent)
 INDICES = [
     ("Nifty 50", ["^NSEI"]), ("Nifty Next 50", ["^NSMIDCP", "NIFTY_NEXT_50.NS"]), ("Nifty 100", ["^CNX100"]),
-    ("Nifty 200", ["^CNX200"]), ("Nifty 500", ["^CNX500"]), ("Nifty Midcap 50", ["^NSEMDCP50"]),
+    ("Nifty 200", ["^CNX200"]), ("Nifty 500", ["^CRSLDX", "^CNX500"]), ("Nifty Midcap 50", ["^NSEMDCP50"]),
     ("Nifty Midcap 100", ["NIFTY_MIDCAP_100.NS", "^CNXMIDCAP"]), ("Nifty Smallcap 100", ["^CNXSC"]),
     ("Nifty Bank", ["^NSEBANK"]), ("Nifty Fin Services", ["NIFTY_FIN_SERVICE.NS", "^CNXFIN"]),
     ("Nifty Private Bank", ["NIFTY_PVT_BANK.NS"]), ("Nifty PSU Bank", ["^CNXPSUBANK"]), ("Nifty IT", ["^CNXIT"]),
@@ -45,9 +45,19 @@ INDICES = [
 ]
 
 
+def yahoo_retry(sym, tries=3):
+    """yahoo_history with back-off: after ~50 stock requests Yahoo sometimes answers 429 for a while."""
+    for i in range(tries):
+        hist, latest = daily.yahoo_history(sym)
+        if hist:
+            return hist, latest
+        time.sleep(3 * (i + 1))
+    return [], None
+
+
 def nifty_sessions(day, n=15):
     """Today's close and the previous n-1 sessions with points and % change each day. None unless today is a session."""
-    hist, latest = daily.yahoo_history("^NSEI")
+    hist, latest = yahoo_retry("^NSEI")
     if not hist:
         return None, "Nifty history not available"
     if latest and hist and latest[0] == hist[-1][0]:
@@ -74,8 +84,8 @@ def nifty_indices(day):
     for name, syms in INDICES:
         ch = None
         for sym in syms:
-            ch = daily.changes(*daily.yahoo_history(sym))
-            time.sleep(0.25)
+            ch = daily.changes(*yahoo_retry(sym))
+            time.sleep(0.5)
             if ch and ch["d1"] is not None:
                 break
         if not ch or ch["d1"] is None:
@@ -162,7 +172,9 @@ def main():
     # 5. All Nifty indices at the close
     try:
         idx_rows, idx_problems = nifty_indices(day)
-        notes += idx_problems[:8]
+        if idx_problems:
+            notes.append(f"Indices without data ({len(idx_problems)}): " + ", ".join(
+                x.split(":")[0] for x in idx_problems[:12]) + (" …" if len(idx_problems) > 12 else ""))
         if len(idx_rows) >= 12:
             p = os.path.join(folder, "16-indices.jpg")
             slides.indices(idx_rows, p)

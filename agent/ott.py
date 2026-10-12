@@ -357,17 +357,16 @@ def main():
     if len(rows) >= 3:
         mon, sun, fri = week_bounds(now)
         sub = f"{mon.strftime('%-d %b')} – {sun.strftime('%-d %b %Y')}"
-        sec_th = ("In cinemas · " + fri.strftime("%A %-d %B"), th)
-        sec_ott = "On OTT · " + f"{mon.strftime('%-d %b')} – {sun.strftime('%-d %b')}"
-        pages = []
-        if len(th) + len(ott) <= MAX_ROWS:          # everything fits on one slide
-            secs = ([sec_th] if th else []) + ([(sec_ott, ott)] if ott else [])
-            pages.append(secs)
+        head_th = "In cinemas · " + fri.strftime("%A %-d %B")
+        head_ott = "On OTT · " + f"{mon.strftime('%-d %b')} – {sun.strftime('%-d %b')}"
+        pages = []                                   # each page = [(heading, rows), ...]
+        if len(th) + len(ott) <= MAX_ROWS:           # everything fits on one slide
+            pages.append(([(head_th, th)] if th else []) + ([(head_ott, ott)] if ott else []))
         else:
             if th:
-                pages.append([(sec_th, th[:MAX_ROWS])])
+                pages.append([(head_th, th[:MAX_ROWS])])
             for i in range(0, len(ott), MAX_ROWS):
-                pages.append([(sec_ott, ott[i:i + MAX_ROWS])])
+                pages.append([(head_ott, ott[i:i + MAX_ROWS])])
         pages = pages[:MAX_SLIDES]
         files = []
         for i, secs in enumerate(pages):

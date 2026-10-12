@@ -72,22 +72,40 @@ def _create(params):
     return js["id"], ""
 
 
-def _wait(cid, tries=24):
-    """Wait until Instagram has processed a container (up to ~2 minutes)."""
-    for _ in range(tries):
+def _wait(cid, tries=12):
+    """Wait until Instagram has processed a container. Polls every 10 s (fewer API calls); images are
+    usually ready within 10-20 s, videos take minutes."""
+    for i in range(tries):
+        time.sleep(8 if i == 0 else 10)
         c2, st = http("GET", f"{GRAPH}/{cid}?fields=status_code&access_token={IG_TOKEN}")
         status = st.get("status_code")
         if status == "FINISHED":
             return True, ""
         if status == "ERROR":
             return False, "Instagram could not process the media"
-        time.sleep(5)
+        if c2 == 403 and "limit" in ig_error(st).lower():
+            time.sleep(60)
     return False, "Instagram took too long to process the media"
+
+
+def rate_limited(msg):
+    return "request limit" in (msg or "").lower() or "rate limit" in (msg or "").lower()
 
 
 def publish(keys, caption, kind="image", cover=None):
     """Instagram API: one image, a carousel (several keys), or a Reel (kind="reel", one .mp4 key).
-    create container(s) -> wait until ready -> publish. Returns (ok, permalink or error)."""
+    If Instagram answers "request limit reached", waits 2 minutes and tries again (3 tries)."""
+    ok, info = False, ""
+    for attempt in range(3):
+        ok, info = _publish_once(keys, caption, kind, cover)
+        if ok or not rate_limited(info):
+            return ok, info
+        log("rate limited, waiting 2 minutes")
+        time.sleep(120)
+    return ok, info
+
+
+def _publish_once(keys, caption, kind="image", cover=None):
     if isinstance(keys, str):
         keys = [keys]
     last = ""
@@ -98,10 +116,10 @@ def publish(keys, caption, kind="image", cover=None):
             if cover:
                 params["cover_url"] = image_urls(cover)[0]
             cid, last = _create(params)
-            tries = 90                                     # video processing can take a few minutes
+            tries = 45                                     # video processing can take a few minutes
         elif len(urls) == 1:
             cid, last = _create({"image_url": urls[0], "caption": caption})
-            tries = 24
+            tries = 12
         else:
             children = []
             for u in urls:
@@ -114,7 +132,7 @@ def publish(keys, caption, kind="image", cover=None):
                     break
                 children.append(child)
             cid = None
-            tries = 24
+            tries = 12
             if len(children) == len(urls):
                 cid, last = _create({"media_type": "CAROUSEL", "children": ",".join(children), "caption": caption})
         if not cid:
@@ -234,8 +252,47 @@ def main():
         save(qpath, queue)
     if changed:
         save(STATE, {"offset": offset})
-    # keep the Instagram token alive (refresh at most once a day)
+    if os.environ.get("AUTO_PUBLISH", "1").strip() != "0":
+        auto_retry()
+    # check the Instagram token (at most once a day)
     refresh_token_daily()
+
+
+def auto_retry():
+    """AUTO_PUBLISH mode: publish anything still 'waiting' from today or yesterday without a tap
+    (e.g. a post that hit Instagram's request limit earlier). At most 3 tries per post."""
+    now = datetime.now(IST)
+    for day in ((now - timedelta(days=1)).strftime("%Y-%m-%d"), now.strftime("%Y-%m-%d")):
+        qpath, queue = load_queue(day)
+        if not queue:
+            continue
+        changed = False
+        for key, item in queue.items():
+            if item.get("status") != "waiting" or item.get("tries", 0) >= 3:
+                continue
+            keys = post_keys(key, item)
+            cover = f"{day}/{item['cover']}" if item.get("cover") else None
+            if not all(image_is_online(k) for k in keys + ([cover] if cover else [])):
+                continue
+            item["tries"] = item.get("tries", 0) + 1
+            changed = True
+            ok, info = publish(keys, item["caption"], kind=item.get("kind", "image"), cover=cover)
+            if ok:
+                item["status"], item["permalink"] = "posted", info
+                item["posted_at"] = now.isoformat()
+                item.pop("error", None)
+                tg("sendMessage", chat_id=TG_CHAT, text=f"✅ Posted on retry ({item['name']}): {info}")
+                log(f"auto-retry posted {key}: {info}")
+            else:
+                item["error"] = info
+                if item["tries"] >= 3:
+                    item["status"] = "failed"
+                    tg("sendMessage", chat_id=TG_CHAT,
+                       text=f"⚠️ {item['name']} ({day}) gave up after 3 tries: {info}")
+                log(f"auto-retry failed {key}: {info}")
+            time.sleep(10)
+        if changed:
+            save(qpath, queue)
 
 
 def refresh_token_daily():
