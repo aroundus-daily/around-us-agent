@@ -34,6 +34,7 @@
   "files": [
    "09-silver-ap.jpg",
    "09-silver-tg.jpg"
-  ]
+  ],
+  "error": "publish failed (403): Application request limit reached"
  }
 }
