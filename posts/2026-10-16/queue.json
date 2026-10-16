@@ -49,7 +49,8 @@
  "2026-10-16/10-rupee.jpg": {
   "name": "rupee",
   "caption": "How many rupees for 1 dollar, euro, pound, yen, yuan, Canadian & Singapore dollar and dirham today.\nఈరోజు రూపాయి విలువ.\n#AroundUs #Rupee",
-  "status": "waiting"
+  "status": "waiting",
+  "error": "publish failed (403): Application request limit reached"
  },
  "2026-10-16/11-nifty.jpg": {
   "name": "nifty",
