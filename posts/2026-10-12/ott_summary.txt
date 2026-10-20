@@ -1,7 +1,0 @@
-🎬 Around Us · Friday releases · Monday, 12 Oct
-
-No post: only 0 releases could be verified (need 3).
-
-Notes:
-• No film-database key (OMDB_API_KEY / TMDB_API_KEY): every title needs two pages, and no ratings.
-• Claude call failed (400): {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'This API key is not scoped to a workspace, so this request must include the anthropic-w
