@@ -34,7 +34,8 @@
   "files": [
    "08-gold-ap.jpg",
    "08-gold-tg.jpg"
-  ]
+  ],
+  "error": "create failed (400): Only photo or video can be accepted as media type."
  },
  "2026-10-22/09-silver-ap.jpg": {
   "name": "silver",
