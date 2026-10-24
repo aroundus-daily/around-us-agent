@@ -1,0 +1,22 @@
+{
+ "2026-10-24/01-world.jpg": {
+  "name": "world",
+  "caption": "India in the world today, in one quick read.\nప్రపంచంలో భారత్ ఈరోజు.\n#AroundUs #India\n\nSources: Cricinfo, Deccan Chronicle, Fibre2Fashion, The Diplomat – Asia-Pacific Current Affairs Magazine, electronics.economictimes.indiatimes.com",
+  "status": "waiting"
+ },
+ "2026-10-24/02-india.jpg": {
+  "name": "india",
+  "caption": "Today's top stories from across India, in simple words.\nఈరోజు దేశంలో ముఖ్య వార్తలు.\n#AroundUs #India\n\nSources: Barca Universal, Cricbuzz, Moneycontrol.com, NDTV, Olympics, Rediff, The Times of India",
+  "status": "waiting"
+ },
+ "2026-10-24/03-south.jpg": {
+  "name": "south",
+  "caption": "What's happening across South India today.\nదక్షిణ భారతంలో ఈరోజు.\n#AroundUs #SouthIndia\n\nSources: Deccan Chronicle, Live Law, Moneycontrol.com, The Hindu, The Times of India",
+  "status": "waiting"
+ },
+ "2026-10-24/04-andhra.jpg": {
+  "name": "andhra",
+  "caption": "Andhra Pradesh today, in one quick read.\nఆంధ్రప్రదేశ్ ఈరోజు.\n#AroundUs #AndhraPradesh\n\nSources: Business Today, Indian Cement Review, The Times of India, cinematalk.in",
+  "status": "waiting"
+ }
+}
