@@ -21,5 +21,15 @@
   "name": "andhra",
   "caption": "Andhra Pradesh today, in one quick read.\nఆంధ్రప్రదేశ్ ఈరోజు.\n#AroundUs #AndhraPradesh\n\nSources: Business Today, Indian Cement Review, The Times of India, cinematalk.in",
   "status": "waiting"
+ },
+ "2026-10-24/13-weekly.mp4": {
+  "name": "weekly",
+  "kind": "reel",
+  "caption": "Markets this week (19–23 Oct 2026): Nifty 50 down 2.36% to 22,600.00. Top gainer HCLTECH +3.1%. Top loser ADANIENT -8.0%. Rupee stronger vs the dollar at 94.97.\nఈ వారం మార్కెట్లు: నిఫ్టీ, టాప్ గెయినర్లు, లూజర్లు, రూపాయి.\nFor information only, not investment advice. Data: NSE via Yahoo Finance, ECB.\n#AroundUs #Nifty50 #StockMarket #WeeklyRecap #Rupee",
+  "status": "waiting",
+  "files": [
+   "13-weekly.mp4"
+  ],
+  "cover": "13-weekly-cover.jpg"
  }
 }
