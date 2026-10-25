@@ -29,7 +29,8 @@
   "files": [
    "08-gold-ap.jpg",
    "08-gold-tg.jpg"
-  ]
+  ],
+  "error": "publish failed (403): Application request limit reached"
  },
  "2026-10-25/09-silver-ap.jpg": {
   "name": "silver",
