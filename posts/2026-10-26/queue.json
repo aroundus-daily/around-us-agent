@@ -2,17 +2,20 @@
  "2026-10-26/01-world.jpg": {
   "name": "world",
   "caption": "India in the world today, in one quick read.\nప్రపంచంలో భారత్ ఈరోజు.\n#AroundUs #India\n\nSources: Daily Pioneer, News On AIR, News18, Sarkaritel.com, The Times of India",
-  "status": "waiting"
+  "status": "waiting",
+  "error": "publish failed (403): Application request limit reached"
  },
  "2026-10-26/02-markets.jpg": {
   "name": "markets",
   "caption": "How the world's 10 biggest stock exchanges closed. For information only, not investment advice.\nమార్కెట్లు ఎలా ముగిశాయి.\n#AroundUs #Sensex",
-  "status": "waiting"
+  "status": "waiting",
+  "error": "publish failed (403): Application request limit reached"
  },
  "2026-10-26/03-india.jpg": {
   "name": "india",
   "caption": "Today's top stories from across India, in simple words.\nఈరోజు దేశంలో ముఖ్య వార్తలు.\n#AroundUs #India\n\nSources: Al Jazeera, Cricbuzz, FXEmpire, India Today, Livemint, Managing Madrid, NDTV, Reuters",
-  "status": "waiting"
+  "status": "waiting",
+  "error": "publish failed (403): Application request limit reached"
  },
  "2026-10-26/04-south.jpg": {
   "name": "south",
