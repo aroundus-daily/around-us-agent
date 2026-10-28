@@ -1,0 +1,27 @@
+{
+ "2026-10-28/01-world.jpg": {
+  "name": "world",
+  "caption": "India in the world today, in one quick read.\nప్రపంచంలో భారత్ ఈరోజు.\n#AroundUs #India\n\nSources: BCCI, BW Businessworld, News On AIR, The Economic Times, The Times of India",
+  "status": "waiting"
+ },
+ "2026-10-28/02-markets.jpg": {
+  "name": "markets",
+  "caption": "How the world's 10 biggest stock exchanges closed. For information only, not investment advice.\nమార్కెట్లు ఎలా ముగిశాయి.\n#AroundUs #Sensex",
+  "status": "waiting"
+ },
+ "2026-10-28/03-india.jpg": {
+  "name": "india",
+  "caption": "Today's top stories from across India, in simple words.\nఈరోజు దేశంలో ముఖ్య వార్తలు.\n#AroundUs #India\n\nSources: Bar and Bench, Bavarian Football Works, Hindustan Times, Investing.com India, Khaleej Times, The Economic Times, The Hindu, The Indian Express",
+  "status": "waiting"
+ },
+ "2026-10-28/04-south.jpg": {
+  "name": "south",
+  "caption": "What's happening across South India today.\nదక్షిణ భారతంలో ఈరోజు.\n#AroundUs #SouthIndia\n\nSources: DT Next, Deccan Chronicle, India Today, The Indian Express, The New Indian Express",
+  "status": "waiting"
+ },
+ "2026-10-28/05-andhra.jpg": {
+  "name": "andhra",
+  "caption": "Andhra Pradesh today, in one quick read.\nఆంధ్రప్రదేశ్ ఈరోజు.\n#AroundUs #AndhraPradesh\n\nSources: Hindustan Times, News On AIR, Sacnilk, The Hindu, The Times of India",
+  "status": "waiting"
+ }
+}
