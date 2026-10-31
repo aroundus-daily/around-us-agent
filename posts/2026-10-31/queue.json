@@ -1,0 +1,22 @@
+{
+ "2026-10-31/01-world.jpg": {
+  "name": "world",
+  "caption": "India in the world today, in one quick read.\nప్రపంచంలో భారత్ ఈరోజు.\n#AroundUs #India\n\nSources: Awaz The Voice, Moneycontrol.com, Olympics, The Tribune",
+  "status": "waiting"
+ },
+ "2026-10-31/02-india.jpg": {
+  "name": "india",
+  "caption": "Today's top stories from across India, in simple words.\nఈరోజు దేశంలో ముఖ్య వార్తలు.\n#AroundUs #India\n\nSources: Autopunditz, Business Standard, Cricbuzz, NDTV, The Times of India, pv magazine India",
+  "status": "waiting"
+ },
+ "2026-10-31/03-south.jpg": {
+  "name": "south",
+  "caption": "What's happening across South India today.\nదక్షిణ భారతంలో ఈరోజు.\n#AroundUs #SouthIndia\n\nSources: GK Today, The Hindu, The New Indian Express",
+  "status": "waiting"
+ },
+ "2026-10-31/04-andhra.jpg": {
+  "name": "andhra",
+  "caption": "Andhra Pradesh today, in one quick read.\nఆంధ్రప్రదేశ్ ఈరోజు.\n#AroundUs #AndhraPradesh\n\nSources: Business Today, News On AIR, Sacnilk",
+  "status": "waiting"
+ }
+}
