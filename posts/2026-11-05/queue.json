@@ -2,40 +2,54 @@
  "2026-11-05/01-world.jpg": {
   "name": "world",
   "caption": "India in the world today, in one quick read.\nప్రపంచంలో భారత్ ఈరోజు.\n#AroundUs #India\n\nSources: Asia News Network, Roland Berger, Sarkaritel.com, Telegraph India, https://www.indiagazette.com/",
-  "status": "waiting",
-  "error": "publish failed (403): Application request limit reached"
+  "status": "posted",
+  "tries": 1,
+  "permalink": "https://www.instagram.com/p/DfXC_aqkU0x/",
+  "posted_at": "2026-11-05T18:00:38.264325+05:30"
  },
  "2026-11-05/02-markets.jpg": {
   "name": "markets",
   "caption": "How the world's 10 biggest stock exchanges closed. For information only, not investment advice.\nమార్కెట్లు ఎలా ముగిశాయి.\n#AroundUs #Sensex",
-  "status": "waiting",
-  "error": "publish failed (403): Application request limit reached"
+  "status": "posted",
+  "tries": 1,
+  "permalink": "https://www.instagram.com/p/DfXDCkiEWaO/",
+  "posted_at": "2026-11-05T18:00:38.264325+05:30"
  },
  "2026-11-05/03-india.jpg": {
   "name": "india",
   "caption": "Today's top stories from across India, in simple words.\nఈరోజు దేశంలో ముఖ్య వార్తలు.\n#AroundUs #India\n\nSources: BCCI, CarWale, INDIA New England News, Investing.com, Investing.com India, Moneycontrol.com, The Times of India, Yahoo News Singapore",
-  "status": "waiting",
-  "error": "publish failed (403): Application request limit reached"
+  "status": "posted",
+  "tries": 1,
+  "permalink": "https://www.instagram.com/p/DfXDFwREXlB/",
+  "posted_at": "2026-11-05T18:00:38.264325+05:30"
  },
  "2026-11-05/04-south.jpg": {
   "name": "south",
   "caption": "What's happening across South India today.\nదక్షిణ భారతంలో ఈరోజు.\n#AroundUs #SouthIndia\n\nSources: BCCI, India Today, Moneycontrol.com, NDTV, The New Indian Express",
-  "status": "waiting"
+  "status": "posted",
+  "tries": 1,
+  "permalink": "https://www.instagram.com/p/DfXDIzDEVWO/",
+  "posted_at": "2026-11-05T18:00:38.264325+05:30"
  },
  "2026-11-05/05-andhra.jpg": {
   "name": "andhra",
   "caption": "Andhra Pradesh today, in one quick read.\nఆంధ్రప్రదేశ్ ఈరోజు.\n#AroundUs #AndhraPradesh\n\nSources: Deccan Chronicle, Education Times, Sacnilk",
-  "status": "waiting"
+  "status": "posted",
+  "tries": 1,
+  "permalink": "https://www.instagram.com/p/DfXDL8rkdU_/",
+  "posted_at": "2026-11-05T18:00:38.264325+05:30"
  },
  "2026-11-05/08-gold-ap.jpg": {
   "name": "gold",
   "caption": "Gold rate in Andhra Pradesh and Telangana, last 10 days. Today 24K ₹1,46,020 and 22K ₹1,33,850 per 10 grams in both states. Swipe for Telangana.\nఆంధ్రప్రదేశ్, తెలంగాణలో గత 10 రోజుల బంగారం ధరలు.\nRates exclude GST, TCS and making charges. Check with your jeweller before buying.\n#AroundUs #GoldRate #GoldPriceToday #AndhraPradesh #Telangana",
-  "status": "waiting",
+  "status": "posted",
   "files": [
    "08-gold-ap.jpg",
    "08-gold-tg.jpg"
   ],
-  "error": "publish failed (403): Application request limit reached"
+  "tries": 1,
+  "permalink": "https://www.instagram.com/p/DfXDR6TEfrE/",
+  "posted_at": "2026-11-05T18:00:38.264325+05:30"
  },
  "2026-11-05/09-silver-ap.jpg": {
   "name": "silver",
