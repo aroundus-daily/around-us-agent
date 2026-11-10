@@ -3,7 +3,6 @@
 1 posts ready: rupee
 
 Notes:
-• CNY: ignored outlier ER-API 14.17
 • No market session today (2026-11-10): Nifty posts skipped
 • Nifty sessions post skipped: no session today (latest 2026-11-09)
 • Indices without data (30): Nifty 50, Nifty Next 50, Nifty 100, Nifty 200, Nifty 500, Nifty Midcap 50, Nifty Midcap 100, Nifty Smallcap 100, Nifty Bank, Nifty Fin Services, Nifty Private Bank, Nifty PSU Bank …
