@@ -1,0 +1,13 @@
+🌇 Around Us · evening posts · Wednesday, 11 Nov
+
+5 posts ready: rupee, nifty, movers, sessions, indices
+
+Notes:
+• EUR: ignored outlier ECB 104.25
+• GBP: ignored outlier ECB 124.67
+• JPY: ignored outlier ECB 58.84
+• CAD: ignored outlier ECB 65.82
+• NESTLEIND: no data
+• Indices without data (9): Nifty Midcap 100, Nifty Smallcap 100, Nifty Private Bank, Nifty Healthcare, Nifty Oil & Gas, Nifty Media, Nifty Consumer Durables, Nifty Commodities, Nifty Services
+
+Tap ✅ Post under any post to publish it.
