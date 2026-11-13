@@ -1,11 +1,9 @@
 🌇 Around Us · evening posts · Friday, 13 Nov
 
-1 posts ready: rupee
+5 posts ready: rupee, nifty, movers, sessions, indices
 
 Notes:
-• No market session today (2026-11-13): Nifty posts skipped
-• Nifty sessions post skipped: no session today (latest 2026-11-12)
-• Indices without data (30): Nifty 50, Nifty Next 50, Nifty 100, Nifty 200, Nifty 500, Nifty Midcap 50, Nifty Midcap 100, Nifty Smallcap 100, Nifty Bank, Nifty Fin Services, Nifty Private Bank, Nifty PSU Bank …
-• Nifty indices post skipped: only 0 indices had today's close
+• CNY: ignored outlier ER-API 14.04
+• Indices without data (9): Nifty Midcap 100, Nifty Smallcap 100, Nifty Private Bank, Nifty Healthcare, Nifty Oil & Gas, Nifty Media, Nifty Consumer Durables, Nifty Commodities, Nifty Services
 
 Tap ✅ Post under any post to publish it.
