@@ -1,0 +1,22 @@
+{
+ "2026-11-14/01-world.jpg": {
+  "name": "world",
+  "caption": "India in the world today, in one quick read.\nప్రపంచంలో భారత్ ఈరోజు.\n#AroundUs #India\n\nSources: DW.com, Elets eGov, Reuters, Telegraph India, The New Indian Express",
+  "status": "waiting"
+ },
+ "2026-11-14/02-india.jpg": {
+  "name": "india",
+  "caption": "Today's top stories from across India, in simple words.\nఈరోజు దేశంలో ముఖ్య వార్తలు.\n#AroundUs #India\n\nSources: Cricbuzz, Cricinfo, Deccan Herald, Hindustan Times, NDTV, Renewable Watch, The Hindu, The Indian Express",
+  "status": "waiting"
+ },
+ "2026-11-14/03-south.jpg": {
+  "name": "south",
+  "caption": "What's happening across South India today.\nదక్షిణ భారతంలో ఈరోజు.\n#AroundUs #SouthIndia\n\nSources: Cricbuzz, Deccan Chronicle, Onmanorama, PM India, Telangana Today",
+  "status": "waiting"
+ },
+ "2026-11-14/04-andhra.jpg": {
+  "name": "andhra",
+  "caption": "Andhra Pradesh today, in one quick read.\nఆంధ్రప్రదేశ్ ఈరోజు.\n#AroundUs #AndhraPradesh\n\nSources: Sacnilk, The Hindu, The Indian Express",
+  "status": "waiting"
+ }
+}
